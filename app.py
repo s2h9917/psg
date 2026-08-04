@@ -62,41 +62,58 @@ with h1:
       updClock(); setInterval(updClock, 1000);
     </script>
     """, height=70)
-h2.info(f"**{status}** — {desc}\n\n💡 장 마감(15:30) 전 오후 3시경 검토용으로 설계되었습니다.")
+h2.info(f"**{status}** — {desc}\n\n💡 장 마감(15:30) 전 오후 3시경 종가무렵에 공략할 수 있도록 설계되었습니다.")
 st.divider()
 
-# --------------------------- 사이드바 ---------------------------
-sb = st.sidebar
-sb.header("⚙️ 설정")
-source = sb.radio("데이터 소스", ["실시간 (네이버+야후)", "데모 데이터"])
-markets = sb.multiselect("대상 시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
-cap_n = sb.slider("분석 유니버스 (시총 상위 N)", 50, 500, 200, 10)
-short_k = sb.slider("정밀분석 후보 수 (개별 조회)", 6, 30, 14, 2,
-                    help="이 수만큼 네이버·야후에서 개별 조회합니다. 클수록 정확하지만 느립니다.")
+# --------------------------- 관리자 설정(사이드바) ---------------------------
+# 기본값(배포 사용자에게 자동 적용). 관리자만 사이드바에서 변경할 수 있습니다.
+source = "실시간 (네이버+야후)"
+markets = ["KOSPI", "KOSDAQ"]
+cap_n, short_k = 200, 14
+w_fund, w_supply, w_sent, w_upside = 0.40, 0.20, 0.15, 0.25
+supply_days, top_n = 20, 3
+oneshot, auto_save = False, True
+nv_id = nv_secret = ""
 
-sb.subheader("가중치 (자동 정규화)")
-w_fund = sb.slider("펀더멘털", 0.0, 1.0, 0.40, 0.05)
-w_supply = sb.slider("수급 (기관·외국인)", 0.0, 1.0, 0.20, 0.05)
-w_sent = sb.slider("시장 심리 / 뉴스", 0.0, 1.0, 0.15, 0.05)
-w_upside = sb.slider("상승여력", 0.0, 1.0, 0.25, 0.05)
-_t = w_fund + w_supply + w_sent + w_upside or 1
-sb.info(f"펀더멘털 {w_fund/_t*100:.0f}% · 수급 {w_supply/_t*100:.0f}% · "
-        f"심리 {w_sent/_t*100:.0f}% · 상승여력 {w_upside/_t*100:.0f}%")
+# 관리자 판별: 주소 끝에 ?admin=<키> 를 붙이면 설정이 보입니다. (키는 Secrets의 ADMIN_KEY로 변경 가능)
+try:
+    ADMIN_KEY = st.secrets["ADMIN_KEY"]
+except Exception:
+    ADMIN_KEY = "mtnadmin"
+is_admin = st.query_params.get("admin") == ADMIN_KEY
 
-supply_days = sb.slider("수급 집계 일수", 5, 40, 20, 5)
-top_n = sb.number_input("추천 종목 수", 1, 10, 3)
-oneshot = sb.checkbox("🎯 원샷 모드 (1위만 크게)", value=False)
-auto_save = sb.checkbox("분석 실행 시 내역 자동 저장", value=True)
-
-with sb.expander("📰 뉴스 감성 (선택)"):
-    st.caption("네이버 뉴스 검색 API 키를 넣으면 심리 지표가 실제 뉴스 헤드라인 감성으로 대체됩니다.")
-    nv_id = st.text_input("Client ID", type="password")
-    nv_secret = st.text_input("Client Secret", type="password")
-
-sb.divider()
-if sb.button("🔄 데이터 캐시 새로고침"):
-    st.cache_data.clear(); st.rerun()
-sb.warning("⚠️ 투자 참고용 도구이며 투자 자문·매매 권유가 아닙니다.")
+if not is_admin:
+    # 일반 사용자에게는 설정(사이드바)을 완전히 숨김
+    st.markdown('<style>section[data-testid="stSidebar"]{display:none;} '
+                'button[kind="header"]{display:none;}</style>', unsafe_allow_html=True)
+else:
+    sb = st.sidebar
+    sb.header("⚙️ 설정 (관리자 전용)")
+    source = sb.radio("데이터 소스", ["실시간 (네이버+야후)", "데모 데이터"])
+    markets = sb.multiselect("대상 시장", ["KOSPI", "KOSDAQ"], default=["KOSPI", "KOSDAQ"])
+    cap_n = sb.slider("분석 유니버스 (시총 상위 N)", 50, 500, 200, 10)
+    short_k = sb.slider("정밀분석 후보 수 (개별 조회)", 6, 30, 14, 2,
+                        help="이 수만큼 네이버·야후에서 개별 조회합니다. 클수록 정확하지만 느립니다.")
+    sb.subheader("가중치 (자동 정규화)")
+    w_fund = sb.slider("펀더멘털", 0.0, 1.0, 0.40, 0.05)
+    w_supply = sb.slider("수급 (기관·외국인)", 0.0, 1.0, 0.20, 0.05)
+    w_sent = sb.slider("시장 심리 / 뉴스", 0.0, 1.0, 0.15, 0.05)
+    w_upside = sb.slider("상승여력", 0.0, 1.0, 0.25, 0.05)
+    _t = w_fund + w_supply + w_sent + w_upside or 1
+    sb.info(f"펀더멘털 {w_fund/_t*100:.0f}% · 수급 {w_supply/_t*100:.0f}% · "
+            f"심리 {w_sent/_t*100:.0f}% · 상승여력 {w_upside/_t*100:.0f}%")
+    supply_days = sb.slider("수급 집계 일수", 5, 40, 20, 5)
+    top_n = sb.number_input("추천 종목 수", 1, 10, 3)
+    oneshot = sb.checkbox("🎯 원샷 모드 (1위만 크게)", value=False)
+    auto_save = sb.checkbox("분석 실행 시 내역 자동 저장", value=True)
+    with sb.expander("📰 뉴스 감성 (선택)"):
+        st.caption("네이버 뉴스 검색 API 키를 넣으면 심리 지표가 실제 뉴스 헤드라인 감성으로 대체됩니다.")
+        nv_id = st.text_input("Client ID", type="password")
+        nv_secret = st.text_input("Client Secret", type="password")
+    sb.divider()
+    if sb.button("🔄 데이터 캐시 새로고침"):
+        st.cache_data.clear(); st.rerun()
+    sb.warning("⚠️ 투자 참고용 도구이며 투자 자문·매매 권유가 아닙니다.")
 
 
 # --------------------------- 캐시 로더 ---------------------------
@@ -298,7 +315,7 @@ with tab_rec:
     if "result" in st.session_state:
         result = st.session_state["result"]; ran_at = st.session_state["ran_at"]
         top = result.head(st.session_state.get("top_n", int(top_n))).reset_index(drop=True)
-        st.success(f"분석 완료! · {st.session_state['note']} · 추천일시 {ran_at}")
+        st.success(f"분석 완료! · MTN PICK '머니캐치' · 추천일시 {ran_at}")
         if st.session_state.pop("saved_msg", None):
             st.toast("📌 추천 내역이 저장되었습니다.")
 
@@ -421,4 +438,5 @@ with tab_bt:
             st.dataframe(bt, use_container_width=True, hide_index=True)
         st.caption("과거 수익률은 미래 수익을 보장하지 않습니다.")
 
-st.caption("데이터 출처: 네이버(스냅샷·재무·수급) + 야후(주가). KRX 직접 로그인 불필요. · 🤖 머니캐치 드림")
+st.divider()
+st.caption("유의사항: 투자 참고 용도이며, 투자자문 및 매매 권유가 아닙니다. 투자의 최종 책임은 본인에게 있습니다.")
