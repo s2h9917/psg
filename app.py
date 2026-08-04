@@ -10,6 +10,7 @@
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 import engine as E
 
 st.set_page_config(page_title="머니캐치", page_icon="📈", layout="wide")
@@ -42,7 +43,25 @@ st.write("")
 now = E.now_kst()
 status, desc = E.market_status(now)
 h1, h2 = st.columns([1, 2])
-h1.metric("현재 시각 (KST)", now.strftime("%Y-%m-%d %H:%M"))
+with h1:
+    components.html("""
+    <div style="font-family:-apple-system,'Malgun Gothic',sans-serif;padding:2px 0;">
+      <div style="font-size:13px;color:#6b7684;">현재 시각 (KST)</div>
+      <div id="kstclock" style="font-family:'SF Mono','Roboto Mono',monospace;
+           font-size:26px;font-weight:700;color:#0e1726;letter-spacing:-.5px;">--:--:--</div>
+    </div>
+    <script>
+      function updClock(){
+        var n = new Date();
+        var kst = new Date(n.getTime() + n.getTimezoneOffset()*60000 + 9*3600000);
+        var p = function(x){return String(x).padStart(2,'0');};
+        document.getElementById('kstclock').textContent =
+          kst.getFullYear()+'-'+p(kst.getMonth()+1)+'-'+p(kst.getDate())+' '+
+          p(kst.getHours())+':'+p(kst.getMinutes())+':'+p(kst.getSeconds());
+      }
+      updClock(); setInterval(updClock, 1000);
+    </script>
+    """, height=70)
 h2.info(f"**{status}** — {desc}\n\n💡 장 마감(15:30) 전 오후 3시경 검토용으로 설계되었습니다.")
 st.divider()
 
@@ -247,7 +266,7 @@ def render_card(i, row, hero=False):
     with c2:
         st.markdown(bar("펀더멘털", row["valuation_score"], "#4c6ef5")
                     + bar("수급(기관·외국인)", row["supply_score"], "#f76707")
-                    + bar("시장 심리 / 감성", row["sentiment_score"], "#22b8cf")
+                    + bar("시장 심리 / 뉴스", row["sentiment_score"], "#22b8cf")
                     + bar("상승여력", row["upside_score"], "#40c057"), unsafe_allow_html=True)
     st.markdown(f'<div class="reason">💡 <b>추천 사유</b><br>{E.build_reason(row)}</div>',
                 unsafe_allow_html=True)

@@ -152,9 +152,9 @@ def add_momentum_sentiment(df, news_scores=None):
     news_scores: {티커: -1~1} 형태가 주어지면 뉴스 감성으로 대체.
     """
     df = df.copy()
-    # 등락률(1개월)을 부드러운 곡선(tanh)으로 매핑 → 0/100에 고착되지 않고 항상 수치가 나옴
+    # 등락률(1개월)을 부드러운 곡선(tanh)으로 매핑 (사유 문구용 원시 심리값)
     chg = pd.to_numeric(df["등락률"], errors="coerce").fillna(0.0)
-    mom = pd.Series(np.tanh(chg / 100.0 / 0.20), index=df.index).clip(-1, 1)  # 완만: ±20%≈±0.76
+    mom = pd.Series(np.tanh(chg / 100.0 / 0.20), index=df.index).clip(-1, 1)
     if news_scores:
         news = df["티커"].map(news_scores)
         df["sentiment"] = news.fillna(mom).clip(-1, 1)
@@ -162,7 +162,12 @@ def add_momentum_sentiment(df, news_scores=None):
     else:
         df["sentiment"] = mom
         df["sentiment_src"] = "모멘텀"
-    df["sentiment_score"] = (df["sentiment"] + 1) / 2
+    # 점수(막대)는 후보군 내 상대순위(백분위) → 펀더멘털·수급과 대비가 자연스러움
+    base = df["sentiment"]
+    if len(df) >= 2 and base.nunique() > 1:
+        df["sentiment_score"] = base.rank(pct=True)
+    else:
+        df["sentiment_score"] = (base + 1) / 2
     return df
 
 
@@ -422,15 +427,15 @@ def build_reason(row):
     else:
         per_txt = f"PER {per:.1f}배{pbr_str}로 밸류에이션 부담은 존재합니다."
 
-    label = "뉴스 심리" if src == "뉴스" else "가격 모멘텀(시장 심리)"
-    if sent >= 0.5:
-        sent_txt = f"최근 {label}가 매우 긍정적입니다."
-    elif sent >= 0.15:
-        sent_txt = f"최근 {label}가 긍정적입니다."
-    elif sent >= -0.15:
-        sent_txt = f"최근 {label}는 중립적입니다."
+    label = "뉴스 심리" if src == "뉴스" else "주가 흐름(시장 심리)"
+    ss = row.get("sentiment_score")
+    ss = 0.5 if (ss is None or pd.isna(ss)) else float(ss)
+    if ss >= 0.7:
+        sent_txt = f"후보군 중 {label}가 상대적으로 강합니다."
+    elif ss >= 0.4:
+        sent_txt = f"{label}는 후보군 중 중간 수준입니다."
     else:
-        sent_txt = f"최근 {label}는 다소 부정적입니다."
+        sent_txt = f"후보군 중 {label}는 상대적으로 약한 편입니다."
 
     # 수급(기관·외국인) 코멘트
     sup = row.get("수급강도")
