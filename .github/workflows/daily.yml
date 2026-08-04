@@ -2,11 +2,13 @@ name: daily-pick
 
 on:
   schedule:
-    - cron: '0 6 * * 1-5'      # 매주 평일 06:00 UTC = 15:00 KST
-  workflow_dispatch: {}         # 수동 실행 버튼
+    # 매일 06:00 UTC = 15:00 KST 에 실행 (장 마감 15:30 직전)
+    # ※ GitHub Actions 스케줄은 수 분 지연될 수 있어 보통 15:00~15:20 사이 실행됩니다.
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}          # 수동 실행 버튼
 
 permissions:
-  contents: write               # 추천 내역 CSV 커밋용
+  contents: write                # 추천 내역 CSV 커밋용
 
 jobs:
   run:
