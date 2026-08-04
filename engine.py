@@ -154,7 +154,7 @@ def add_momentum_sentiment(df, news_scores=None):
     df = df.copy()
     # 등락률(1개월)을 부드러운 곡선(tanh)으로 매핑 → 0/100에 고착되지 않고 항상 수치가 나옴
     chg = pd.to_numeric(df["등락률"], errors="coerce").fillna(0.0)
-    mom = pd.Series(np.tanh(chg / 100.0 / 0.10), index=df.index).clip(-1, 1)  # ±10%≈±0.76
+    mom = pd.Series(np.tanh(chg / 100.0 / 0.20), index=df.index).clip(-1, 1)  # 완만: ±20%≈±0.76
     if news_scores:
         news = df["티커"].map(news_scores)
         df["sentiment"] = news.fillna(mom).clip(-1, 1)

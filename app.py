@@ -30,6 +30,7 @@ st.markdown("""
       background:#eef2ff;color:#4c6ef5;margin-right:6px;}
 .mkt{background:#e6fcf5;color:#0ca678;} .hot{background:#fff0f0;color:#e03131;}
 .mascot{font-size:13px;color:#5c7cfa;background:#eef2ff;border-radius:10px;padding:6px 12px;display:inline-block;}
+button[data-baseweb="tab"] p{font-weight:800 !important;font-size:16px !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -157,6 +158,17 @@ def run_pipeline():
         df["vol_ratio"] = [1.0 + abs(x)/10 for x in df["등락률"]]
         df["spark"] = df["현재가"].apply(lambda c: [round(c*(1+_np.sin(i/3)/25), 1) for i in range(30)])
 
+    # 시장 심리를 "보이는 최근 주가(스파크라인)" 기준 1개월 모멘텀으로 재계산 → 차트와 값 일치
+    def _spark_mom(sp):
+        if isinstance(sp, list) and len(sp) >= 6:
+            base = sp[-min(21, len(sp))]
+            if base:
+                return (sp[-1] / base - 1) * 100
+        return None
+    if "spark" in df.columns:
+        df["등락률"] = df.apply(lambda r: _spark_mom(r["spark"])
+                               if _spark_mom(r["spark"]) is not None else r.get("등락률", 0.0), axis=1)
+
     df = E.add_valuation_score(df)
     news = None
     if nv_id and nv_secret:
@@ -229,8 +241,9 @@ def render_card(i, row, hero=False):
         m4.metric("참고 손절가", f"{int(row['stop']):,}원")
         spark = row.get("spark")
         if isinstance(spark, list) and len(spark) > 2:
-            st.caption("최근 주가 흐름")
-            st.line_chart(pd.DataFrame({"종가": spark}), height=110)
+            st.caption("최근 주가 흐름 (약 3개월 · 일봉)")
+            _idx = pd.bdate_range(end=pd.Timestamp(now.date()), periods=len(spark))
+            st.line_chart(pd.DataFrame({"종가": spark}, index=_idx), height=120)
     with c2:
         st.markdown(bar("펀더멘털", row["valuation_score"], "#4c6ef5")
                     + bar("수급(기관·외국인)", row["supply_score"], "#f76707")
@@ -242,7 +255,7 @@ def render_card(i, row, hero=False):
 
 
 # --------------------------- 탭 ---------------------------
-tab_rec, tab_hist, tab_bt = st.tabs(["🎯 오늘의 추천", "📜 추천 내역", "📈 성과·백테스트"])
+tab_rec, tab_hist, tab_bt = st.tabs(["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**"])
 
 with tab_rec:
     if st.button("🚀 오늘의 추천 종목 분석 실행하기", type="primary"):
