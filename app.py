@@ -12,7 +12,7 @@ import pandas as pd
 import streamlit as st
 import engine as E
 
-st.set_page_config(page_title="AI 종목 추천기", page_icon="📈", layout="wide")
+st.set_page_config(page_title="머니캐치", page_icon="📈", layout="wide")
 HISTORY_PATH = "recommendation_history.csv"
 
 st.markdown("""
@@ -33,8 +33,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📊 AI 펀더멘털·수급 종목 추천기")
-st.markdown('<span class="mascot">🤖 픽봇: 안녕하세요! 오늘도 코스피·코스닥에서 <b>가치+수급</b>이 좋은 종목을 골라드릴게요.</span>',
+st.title("💰 MTN의 AI 알고리즘이 PICK한 '머니캐치'")
+st.markdown('<span class="mascot">🤖 머니캐치: 안녕하세요! 오늘도 코스피·코스닥에서 <b>가치+수급</b>이 좋은 종목을 골라드릴게요.</span>',
             unsafe_allow_html=True)
 st.write("")
 
@@ -192,7 +192,13 @@ def save_current_to_history(top_df, ran_at):
 
 
 def bar(label, value, color):
-    pct = max(0, min(value, 1)) * 100
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        v = 0.0
+    if v != v:  # NaN 방어
+        v = 0.0
+    pct = max(0.0, min(v, 1.0)) * 100
     return (f'<div style="font-size:12px;color:#555;">{label} <b>{pct:.0f}</b></div>'
             f'<div class="bar-wrap"><div class="bar" style="width:{pct:.0f}%;background:{color};"></div></div>')
 
@@ -277,13 +283,12 @@ with tab_rec:
 
         with st.expander("📋 정밀분석 후보 전체 순위표"):
             cols = ["종목명", "티커", "시장", "현재가", "buy", "target", "stop", "upside",
-                    "ROE", "PER", "PBR", "DIV", "수급강도", "vol_ratio", "total_score"]
+                    "ROE", "PER", "PBR", "DIV", "vol_ratio", "total_score"]
             cols = [c for c in cols if c in result.columns]
             tbl = result[cols].rename(columns={"buy": "매수가", "target": "목표가", "stop": "손절가",
                      "upside": "상승여력", "vol_ratio": "거래량배수", "total_score": "종합점수"})
             if "상승여력" in tbl: tbl["상승여력"] = (tbl["상승여력"]*100).round(1)
             if "종합점수" in tbl: tbl["종합점수"] = tbl["종합점수"].round(1)
-            if "수급강도" in tbl: tbl["수급강도"] = (tbl["수급강도"]*100).round(2)
             if "거래량배수" in tbl: tbl["거래량배수"] = tbl["거래량배수"].round(2)
             for c in ["ROE", "PER", "PBR", "DIV"]:
                 if c in tbl: tbl[c] = tbl[c].round(2)
@@ -384,4 +389,4 @@ with tab_bt:
             st.dataframe(bt, use_container_width=True, hide_index=True)
         st.caption("과거 수익률은 미래 수익을 보장하지 않습니다.")
 
-st.caption("데이터 출처: 네이버(스냅샷·재무·수급) + 야후(주가). KRX 직접 로그인 불필요. · 🤖 픽봇 드림")
+st.caption("데이터 출처: 네이버(스냅샷·재무·수급) + 야후(주가). KRX 직접 로그인 불필요. · 🤖 머니캐치 드림")

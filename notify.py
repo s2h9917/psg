@@ -93,7 +93,7 @@ def build_recommendations():
 
 def format_message(top, asof):
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"📈 <b>오늘의 추천 종목</b> (기준일 {asof})", ""]
+    lines = [f"💰 <b>머니캐치</b> — MTN AI PICK (기준일 {asof})", ""]
     for i, r in top.iterrows():
         m = medals[i] if i < 3 else "🔹"
         mkt = r.get("시장", "")
