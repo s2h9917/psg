@@ -53,6 +53,8 @@ DEMO_UNIVERSE = pd.DataFrame([
 ], columns=["티커", "종목명", "현재가", "시가총액", "PER", "PBR",
             "EPS", "BPS", "DIV", "등락률"])
 DEMO_UNIVERSE["ROE"] = (DEMO_UNIVERSE["EPS"] / DEMO_UNIVERSE["BPS"] * 100).round(2)
+# 데모용 수급강도(순매수/상장주식수 근사): 모멘텀과 대략 연동되도록 합성
+DEMO_UNIVERSE["수급강도"] = (DEMO_UNIVERSE["등락률"] / 1000).round(4)
 
 
 # ====================================================================
@@ -223,7 +225,8 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
     sym = _yf_symbol(ticker, market)
     m = {"PER": np.nan, "PBR": np.nan, "ROE": np.nan, "DIV": np.nan,
          "현재가": fallback_price, "등락률": fallback_chg,
-         "high52": None, "ma20": None, "low60": None}
+         "high52": None, "ma20": None, "low60": None,
+         "vol_ratio": None, "spark": None}
 
     # --- 펀더멘털: 네이버 (신뢰도 높음) ---
     try:
@@ -235,7 +238,8 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
     # --- 기술지표: 야후 1년 주가 ---
     tk = yf.Ticker(sym)
     try:
-        close = tk.history(period="1y")["Close"].dropna()
+        hist = tk.history(period="1y")
+        close = hist["Close"].dropna()
         if len(close):
             cur = float(close.iloc[-1])
             m["현재가"] = cur
@@ -244,6 +248,12 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
             m["ma20"] = float(close.tail(20).mean())
             if len(close) > 21:
                 m["등락률"] = (cur / float(close.iloc[-21]) - 1) * 100
+            m["spark"] = [round(float(x), 2) for x in close.tail(60).tolist()]
+        vol = hist["Volume"].dropna() if "Volume" in hist else None
+        if vol is not None and len(vol) > 20:
+            avg20 = float(vol.tail(20).mean())
+            if avg20 > 0:
+                m["vol_ratio"] = float(vol.iloc[-1]) / avg20  # 당일 거래량 / 20일 평균
     except Exception:
         pass
     try:
@@ -267,6 +277,64 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
     if m["ROE"] is not None and not np.isnan(m["ROE"]) and abs(m["ROE"]) > 150:
         m["ROE"] = np.nan
     return m
+
+
+def fetch_supply(code, n_days=20):
+    """
+    네이버 금융 '외국인·기관 매매동향'(frgn.naver)에서 최근 N영업일
+    기관+외국인 순매매(주식수) 합계를 반환. 순매수(+)/순매도(-).
+    반환: {"net": 순매매합계(주), "days": 실제집계일수}
+    """
+    import urllib.request
+    import io
+    out = {"net": None, "days": 0}
+    url = f"https://finance.naver.com/item/frgn.naver?code={code}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(req, timeout=6).read().decode("euc-kr", "ignore")
+    except Exception:
+        return out
+    try:
+        tables = pd.read_html(io.StringIO(html))
+    except Exception:
+        return out
+    # 기관/외국인 순매매 컬럼을 가진 표 탐색
+    target = None
+    for t in tables:
+        cols = [str(c) for c in t.columns.get_level_values(-1)]
+        if any("기관" in c for c in cols) and any("외국인" in c for c in cols):
+            target = t
+            break
+    if target is None:
+        return out
+    try:
+        flat = [str(c) for c in target.columns.get_level_values(-1)]
+        inst_i = next(i for i, c in enumerate(flat) if "기관" in c)
+        forn_i = next(i for i, c in enumerate(flat) if "외국인" in c and "보유" not in c)
+        sub = target.iloc[:, [inst_i, forn_i]].apply(
+            lambda s: pd.to_numeric(
+                s.astype(str).str.replace(",", "").str.replace("+", ""), errors="coerce"))
+        sub = sub.dropna().head(n_days)
+        if len(sub):
+            out["net"] = float(sub.sum().sum())
+            out["days"] = int(len(sub))
+    except Exception:
+        pass
+    return out
+
+
+def add_supply_score(df):
+    """수급강도(순매수 주식수 ÷ 상장주식수) 백분위 → supply_score(0~1)."""
+    df = df.copy()
+    if "수급강도" not in df.columns:
+        df["supply_score"] = 0.5
+        return df
+    s = pd.to_numeric(df["수급강도"], errors="coerce")
+    if s.notna().sum() == 0:
+        df["supply_score"] = 0.5
+    else:
+        df["supply_score"] = s.fillna(s.median()).rank(pct=True)
+    return df
 
 
 def _round_to(v, base=100):
@@ -300,14 +368,17 @@ def compute_price_targets(current, tech, score_unit):
 # ====================================================================
 # 종합 점수 & 추천 사유
 # ====================================================================
-def finalize(df, w_fund, w_sent, w_upside):
-    """상승여력 점수 반영 후 종합 점수(0~100) 계산 및 정렬."""
+def finalize(df, w_fund, w_sent, w_upside, w_supply=0.0):
+    """상승여력·수급 점수 반영 후 종합 점수(0~100) 계산 및 정렬."""
     df = df.copy()
-    total = w_fund + w_sent + w_upside
+    if "supply_score" not in df.columns:
+        df["supply_score"] = 0.5   # 수급 데이터 없으면 중립
+    total = w_fund + w_sent + w_upside + w_supply
     if total == 0:
-        w_fund = w_sent = w_upside = 1 / 3
+        w_fund = w_sent = w_upside = w_supply = 0.25
     else:
-        w_fund, w_sent, w_upside = w_fund / total, w_sent / total, w_upside / total
+        w_fund, w_sent, w_upside, w_supply = (w_fund/total, w_sent/total,
+                                              w_upside/total, w_supply/total)
 
     up = df["upside"].clip(lower=0)
     df["upside_score"] = (up / 0.5).clip(0, 1)   # 상승여력 50% → 만점
@@ -315,7 +386,8 @@ def finalize(df, w_fund, w_sent, w_upside):
     df["total_score"] = (
         df["valuation_score"] * w_fund +
         df["sentiment_score"] * w_sent +
-        df["upside_score"] * w_upside
+        df["upside_score"] * w_upside +
+        df["supply_score"] * w_supply
     ) * 100
     return df.sort_values("total_score", ascending=False).reset_index(drop=True)
 
@@ -358,8 +430,51 @@ def build_reason(row):
     else:
         sent_txt = f"최근 {label}는 다소 부정적입니다."
 
-    return (f"{roe_txt} {per_txt} {sent_txt} "
+    # 수급(기관·외국인) 코멘트
+    sup = row.get("수급강도")
+    sup_txt = ""
+    if sup is not None and pd.notna(sup):
+        if sup >= 0.01:
+            sup_txt = " 최근 기관·외국인 순매수가 뚜렷하게 유입되고 있습니다."
+        elif sup > 0:
+            sup_txt = " 최근 기관·외국인 수급이 소폭 순매수 우위입니다."
+        elif sup <= -0.01:
+            sup_txt = " 다만 최근 기관·외국인 순매도가 관찰됩니다."
+        else:
+            sup_txt = " 기관·외국인 수급은 중립적입니다."
+
+    # 거래량 급증 코멘트
+    vr = row.get("vol_ratio")
+    vol_txt = ""
+    if vr is not None and pd.notna(vr) and vr >= 2.0:
+        vol_txt = f" 당일 거래량이 20일 평균의 {vr:.1f}배로 관심이 집중되고 있습니다."
+
+    return (f"{roe_txt} {per_txt} {sent_txt}{sup_txt}{vol_txt} "
             f"기술적·밸류에이션 기준 상승여력은 약 **{upside*100:.1f}%**입니다.")
+
+
+def backtest_picks(pick_list, months=3):
+    """
+    선정 종목들을 'months개월 전에 매수했다면'의 과거 수익률(사후 참고).
+    pick_list: [(티커, 시장, 종목명), ...]  → DataFrame 반환.
+    ※ 워크포워드 백테스트가 아니라 현재 선정 종목의 과거 성과 확인용입니다.
+    """
+    import yfinance as yf
+    rows = []
+    for code, market, name in pick_list:
+        sym = _yf_symbol(code, market)
+        ret = np.nan
+        try:
+            close = yf.Ticker(sym).history(period="1y")["Close"].dropna()
+            if len(close) > 5:
+                days = min(len(close) - 1, int(months * 21))
+                past, now_ = float(close.iloc[-1 - days]), float(close.iloc[-1])
+                if past > 0:
+                    ret = (now_ - past) / past * 100
+        except Exception:
+            pass
+        rows.append({"종목명": name, "티커": code, f"{months}개월 수익률(%)": round(ret, 1) if pd.notna(ret) else np.nan})
+    return pd.DataFrame(rows)
 
 
 # ====================================================================
