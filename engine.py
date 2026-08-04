@@ -359,11 +359,20 @@ def compute_price_targets(current, tech, score_unit):
 
     # 매수가: 현재가와 20일선 사이의 눌림목 진입 기준
     buy = min(current * 0.99, max(ma20, current * 0.96))
-    # 목표가: 52주 고점(저항) 또는 점수 차등 상승률(10~28%) 중 높은 값,
-    #        단 과도한 목표를 막기 위해 현재가 대비 +50% 이내로 상한
-    expected = 0.10 + 0.18 * score_unit
-    target = max(high52, current * (1 + expected))
-    target = min(target, current * 1.5)
+
+    # 목표가: 종목 점수에 따라 상승률을 차등화(전 종목 동일 방지)
+    #  - 기본 기대 상승률: 점수 비례 8%~32%
+    base_up = 0.08 + 0.24 * score_unit
+    up = base_up
+    #  - 52주 고점(저항)이 기본 목표보다 위면, '남은 거리의 일부'만(점수 비례) 추가 반영
+    if high52 and high52 > current * (1 + base_up):
+        remain = high52 / current - 1 - base_up
+        up = base_up + max(0.0, remain) * (0.2 + 0.3 * score_unit)
+    #  - 종목별 상한: 점수에 따라 +15%~+45% (플랫 +50% 상한 대신 차등 상한)
+    up = min(up, 0.15 + 0.30 * score_unit)
+    up = max(up, 0.05)
+    target = current * (1 + up)
+
     # 손절가: 최근 60일 저점과 매수가 -8% 중 낮은 쪽
     stop = min(low60, buy * 0.92)
 
