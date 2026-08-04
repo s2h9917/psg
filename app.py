@@ -163,7 +163,7 @@ def run_pipeline():
 
     if live:
         short = pick_shortlist(uni, short_k, markets or ["KOSPI"])
-        prog = st.progress(0.0, text="네이버·야후에서 개별 지표 수집 중...")
+        prog = st.progress(0.0, text="네이버·야후에서 개별 지표 분석 중...")
         rows, n = [], len(short)
         for i, (_, r) in enumerate(short.iterrows()):
             m = fetch_metrics_cached(r["티커"], r["시장"], float(r["현재가"]),
@@ -184,7 +184,7 @@ def run_pipeline():
                 "vol_ratio": m["vol_ratio"], "spark": m["spark"],
                 "_tech": {"high52": m["high52"], "ma20": m["ma20"], "low60": m["low60"]},
             })
-            prog.progress((i + 1) / n, text=f"개별 지표 수집 중... ({i+1}/{n})")
+            prog.progress((i + 1) / n, text=f"개별 지표 분석 중... ({i+1}/{n})")
         prog.empty()
         df = pd.DataFrame(rows)
     else:
@@ -296,7 +296,7 @@ tab_rec, tab_hist, tab_bt = st.tabs(["**🎯 오늘의 추천**", "**📜 추천
 with tab_rec:
     if st.button("🚀 오늘의 추천 종목 분석 실행하기", type="primary"):
         if source.startswith("실시간"):
-            with st.spinner("네이버 전종목 스냅샷 로딩 중..."):
+            with st.spinner("머니캐치 알고리즘 로딩 중..."):
                 try:
                     result = run_pipeline()
                     note = f"실시간(네이버+야후) · 기준일 {result.attrs.get('asof','')}"
@@ -345,7 +345,7 @@ with tab_rec:
         st.caption("📢 알고리즘 기반 참고 자료이며 매수·매도를 권유하지 않습니다. 수급강도는 최근 N일 "
                    "기관·외국인 순매수 ÷ 상장주식수(%)이며, 일부 종목은 재무·수급이 미확보될 수 있습니다.")
     else:
-        st.info("사이드바 설정을 확인한 뒤 **'분석 실행하기'** 버튼을 눌러주세요. "
+        st.info("**'오늘의 추천 종목 분석 실행하기'** 버튼을 눌러주세요. "
                 "실시간 첫 실행은 개별 조회로 다소 걸릴 수 있습니다.")
 
 with tab_hist:
