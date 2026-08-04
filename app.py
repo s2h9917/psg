@@ -129,10 +129,8 @@ def run_pipeline():
             prog.progress((i + 1) / n, text=f"야후 수집 중... ({i+1}/{n})")
         prog.empty()
         df = pd.DataFrame(rows)
-        for c in ["PER", "PBR", "ROE"]:
-            med = df[c].median()
-            df[c] = df[c].fillna(med if pd.notna(med) else 0.0)
-        df["DIV"] = df["DIV"].fillna(0.0)
+        # 결측 펀더멘털은 add_valuation_score가 점수 계산 시에만 중립 보정하고,
+        # 표시용 PER/PBR/ROE 원본은 결측 그대로 두어 '미확보'로 정직하게 표기
     else:
         df = uni.sort_values("시가총액", ascending=False).head(short_k).copy()
         df["_tech"] = df["현재가"].apply(lambda c: {"high52": c*1.22, "ma20": c*0.98, "low60": c*0.9})

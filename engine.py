@@ -126,12 +126,19 @@ def _pct_low_good(s):
 
 
 def add_valuation_score(df):
-    """ROE(↑)·PER(↓)·PBR(↓)·DIV(↑) 백분위 평균 → valuation_score(0~1)."""
+    """ROE(↑)·PER(↓)·PBR(↓)·DIV(↑) 백분위 평균 → valuation_score(0~1).
+    결측값은 표시용 원본은 그대로 두고, 점수 계산 시에만 중앙값(없으면 중립값)으로 보정."""
     df = df.copy()
-    roe_p = _pct_high_good(df["ROE"].clip(lower=0))
-    per_p = _pct_low_good(df["PER"])
-    pbr_p = _pct_low_good(df["PBR"])
-    div_p = _pct_high_good(df["DIV"].fillna(0))
+
+    def _col(name, neutral):
+        s = pd.to_numeric(df[name], errors="coerce")
+        med = s.median()
+        return s.fillna(med if pd.notna(med) else neutral)
+
+    roe_p = _pct_high_good(_col("ROE", 8.0).clip(lower=0))
+    per_p = _pct_low_good(_col("PER", 15.0))
+    pbr_p = _pct_low_good(_col("PBR", 1.2))
+    div_p = _pct_high_good(_col("DIV", 0.0))
     df["valuation_score"] = (roe_p * 0.35 + per_p * 0.30 +
                              pbr_p * 0.20 + div_p * 0.15)
     return df
@@ -162,21 +169,71 @@ def _yf_symbol(ticker, market):
     return f"{ticker}.{'KQ' if market == 'KOSDAQ' else 'KS'}"
 
 
+def _num_after(html, anchor, window=180):
+    """html에서 anchor 문자열 뒤 구간의 첫 숫자를 float으로 반환 (태그 제거)."""
+    import re
+    i = html.find(anchor)
+    if i < 0:
+        return None
+    seg = re.sub(r"<[^>]+>", " ", html[i:i + window])
+    m = re.search(r"-?\d[\d,]*\.?\d*", seg)
+    if not m:
+        return None
+    try:
+        return float(m.group().replace(",", ""))
+    except ValueError:
+        return None
+
+
+def fetch_fundamentals_naver(code):
+    """
+    네이버 금융 종목 페이지에서 PER·PBR을 직접 수집(요소 id `_per`,`_pbr`는 오래 안정적).
+    ROE = PBR / PER × 100 로 산출(수학적으로 EPS/BPS와 동일). 클라우드에서도 안정적.
+    """
+    import urllib.request
+    out = {"PER": np.nan, "PBR": np.nan, "ROE": np.nan, "DIV": np.nan}
+    url = f"https://finance.naver.com/item/main.naver?code={code}"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        html = urllib.request.urlopen(req, timeout=6).read().decode("euc-kr", "ignore")
+    except Exception:
+        return out
+
+    per = _num_after(html, 'id="_per"')
+    pbr = _num_after(html, 'id="_pbr"')
+    if per and per > 0:
+        out["PER"] = per
+    if pbr and pbr > 0:
+        out["PBR"] = pbr
+    if out["PER"] and out["PBR"] and not (np.isnan(out["PER"]) or np.isnan(out["PBR"])):
+        out["ROE"] = round(out["PBR"] / out["PER"] * 100, 2)   # ROE ≈ PBR/PER
+
+    dvr = _num_after(html, 'id="_dvr"')   # 배당수익률(있으면)
+    if dvr is not None and 0 <= dvr < 30:
+        out["DIV"] = dvr
+    return out
+
+
 def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None):
     """
-    야후(yfinance)에서 개별 종목의 재무·기술 지표를 수집.
-    반환: PER, PBR, ROE(%), DIV(%), 현재가, 등락률(약 1개월 모멘텀 %),
-          high52, ma20, low60  (실패 시 합리적 폴백)
+    재무(PER·PBR·ROE·배당)는 네이버에서, 기술지표(현재가·52주·이평·모멘텀)는 야후에서 수집.
+    반환: PER, PBR, ROE(%), DIV(%), 현재가, 등락률(약 1개월 모멘텀 %), high52, ma20, low60
     """
     import yfinance as yf
     sym = _yf_symbol(ticker, market)
-    m = {"PER": np.nan, "PBR": np.nan, "ROE": np.nan, "DIV": 0.0,
+    m = {"PER": np.nan, "PBR": np.nan, "ROE": np.nan, "DIV": np.nan,
          "현재가": fallback_price, "등락률": fallback_chg,
          "high52": None, "ma20": None, "low60": None}
 
-    tk = yf.Ticker(sym)
+    # --- 펀더멘털: 네이버 (신뢰도 높음) ---
+    try:
+        f = fetch_fundamentals_naver(ticker)
+        m.update({k: f[k] for k in ("PER", "PBR", "ROE", "DIV")})
+    except Exception:
+        pass
 
-    # --- 기술적 지표: 1년 주가 (가장 안정적) ---
+    # --- 기술지표: 야후 1년 주가 ---
+    tk = yf.Ticker(sym)
     try:
         close = tk.history(period="1y")["Close"].dropna()
         if len(close):
@@ -186,11 +243,9 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
             m["low60"] = float(close.tail(60).min())
             m["ma20"] = float(close.tail(20).mean())
             if len(close) > 21:
-                m["등락률"] = (cur / float(close.iloc[-21]) - 1) * 100  # 약 1개월 모멘텀
+                m["등락률"] = (cur / float(close.iloc[-21]) - 1) * 100
     except Exception:
         pass
-
-    # --- 52주/이평 보강 (fast_info) ---
     try:
         fi = tk.fast_info
         m["현재가"] = m["현재가"] or float(fi["last_price"])
@@ -200,29 +255,17 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
     except Exception:
         pass
 
-    # --- 펀더멘털: info (다소 불안정 → 실패해도 진행) ---
-    try:
-        info = tk.info
-        per = info.get("trailingPE")
-        m["PER"] = float(per) if per and per > 0 else np.nan
-        pbr = info.get("priceToBook")
-        m["PBR"] = float(pbr) if pbr and pbr > 0 else np.nan
-        roe = info.get("returnOnEquity")
-        m["ROE"] = float(roe) * 100 if roe is not None else np.nan
-        div = info.get("dividendYield")
-        if div is not None:
-            m["DIV"] = float(div) * 100 if div < 1 else float(div)  # 소수/퍼센트 자동 판별
-        if m["현재가"] is None:
-            m["현재가"] = info.get("currentPrice") or info.get("regularMarketPrice")
-    except Exception:
-        pass
-
-    # 폴백 정리
+    # --- 폴백/정합성 정리 ---
     cur = m["현재가"] or fallback_price or 0
-    if m["high52"] is None: m["high52"] = cur * 1.2
-    if m["ma20"] is None:   m["ma20"] = cur * 0.98
-    if m["low60"] is None:  m["low60"] = cur * 0.9
-    if m["등락률"] is None:  m["등락률"] = fallback_chg if fallback_chg is not None else 0.0
+    # 비정상 52주 고가(현재가보다 낮거나 3배 초과)는 신뢰 불가 → 보수적 대체
+    if not (m["high52"] and cur and cur <= m["high52"] <= cur * 3):
+        m["high52"] = cur * 1.2
+    if m["ma20"] is None: m["ma20"] = cur * 0.98
+    if m["low60"] is None: m["low60"] = cur * 0.9
+    if m["등락률"] is None: m["등락률"] = fallback_chg if fallback_chg is not None else 0.0
+    # ROE 이상치 방어
+    if m["ROE"] is not None and not np.isnan(m["ROE"]) and abs(m["ROE"]) > 150:
+        m["ROE"] = np.nan
     return m
 
 
@@ -241,9 +284,11 @@ def compute_price_targets(current, tech, score_unit):
 
     # 매수가: 현재가와 20일선 사이의 눌림목 진입 기준
     buy = min(current * 0.99, max(ma20, current * 0.96))
-    # 목표가: 52주 고점(저항) 또는 점수 차등 상승률(10~28%) 중 높은 값
+    # 목표가: 52주 고점(저항) 또는 점수 차등 상승률(10~28%) 중 높은 값,
+    #        단 과도한 목표를 막기 위해 현재가 대비 +50% 이내로 상한
     expected = 0.10 + 0.18 * score_unit
     target = max(high52, current * (1 + expected))
+    target = min(target, current * 1.5)
     # 손절가: 최근 60일 저점과 매수가 -8% 중 낮은 쪽
     stop = min(low60, buy * 0.92)
 
@@ -276,23 +321,32 @@ def finalize(df, w_fund, w_sent, w_upside):
 
 
 def build_reason(row):
-    roe, per, pbr = row["ROE"], row["PER"], row["PBR"]
+    roe, per, pbr = row.get("ROE"), row.get("PER"), row.get("PBR")
     sent, src = row["sentiment"], row.get("sentiment_src", "모멘텀")
     upside = row["upside"]
 
-    if roe >= 15:
+    roe_ok = roe is not None and pd.notna(roe)
+    per_ok = per is not None and pd.notna(per) and per > 0
+    pbr_ok = pbr is not None and pd.notna(pbr) and pbr > 0
+
+    if not roe_ok:
+        roe_txt = "수익성 지표(ROE)는 공개 데이터에서 확인되지 않았습니다."
+    elif roe >= 15:
         roe_txt = f"높은 ROE({roe:.1f}%)로 수익성이 매우 우수합니다."
     elif roe >= 8:
         roe_txt = f"양호한 ROE({roe:.1f}%)로 안정적인 수익성을 확보하고 있습니다."
     else:
         roe_txt = f"ROE({roe:.1f}%)는 다소 낮아 수익성 개선이 관건입니다."
 
-    if 0 < per <= 10:
-        per_txt = f"PER {per:.1f}배·PBR {pbr:.2f}배로 저평가 매력이 큽니다."
+    pbr_str = f"·PBR {pbr:.2f}배" if pbr_ok else ""
+    if not per_ok:
+        per_txt = "PER/PBR 등 밸류에이션 지표를 확보하지 못해 이번 평가에서는 모멘텀·상승여력 비중이 큽니다."
+    elif per <= 10:
+        per_txt = f"PER {per:.1f}배{pbr_str}로 저평가 매력이 큽니다."
     elif per <= 20:
-        per_txt = f"PER {per:.1f}배로 밸류에이션이 적정 수준입니다."
+        per_txt = f"PER {per:.1f}배{pbr_str}로 밸류에이션이 적정 수준입니다."
     else:
-        per_txt = f"PER {per:.1f}배로 밸류에이션 부담은 존재합니다."
+        per_txt = f"PER {per:.1f}배{pbr_str}로 밸류에이션 부담은 존재합니다."
 
     label = "뉴스 심리" if src == "뉴스" else "가격 모멘텀(시장 심리)"
     if sent >= 0.5:
