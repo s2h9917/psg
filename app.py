@@ -379,8 +379,8 @@ def render_card(i, row, hero=False):
 render_breadth()
 
 # --------------------------- 탭 ---------------------------
-tab_rec, tab_hist, tab_bt, tab_fv = st.tabs(
-    ["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**", "**💎 적정주가**"])
+tab_rec, tab_hist, tab_bt, tab_fv, tab_cal = st.tabs(
+    ["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**", "**💎 적정주가**", "**📅 증시 캘린더**"])
 
 with tab_rec:
     _hr = int(now.strftime("%H"))
@@ -626,6 +626,34 @@ with tab_fv:
                         f"- 데이터: 네이버(PER/PBR/배당) + 스냅샷(시세) · **투자자문 아님**")
                 st.caption("※ 현금흐름(EV/EBITDA) 모델은 재무제표(DART) 데이터가 필요해 이번 버전에서는 제외했습니다. "
                            "적정주가는 가정에 민감한 참고값이며 매매 권유가 아닙니다.")
+
+with tab_cal:
+    st.subheader("📅 증시 캘린더")
+    st.caption("금리 결정·CPI·고용·GDP 등 증시에 영향을 주는 주요 경제 일정입니다. (실시간 제공: TradingView)")
+    fc1, fc2 = st.columns(2)
+    imp = fc1.radio("중요도", ["중간+높음", "높음만", "전체"], horizontal=True, index=0)
+    scope = fc2.radio("국가", ["한국·미국 중심", "주요국 전체"], horizontal=True, index=0)
+    imp_map = {"중간+높음": "0,1", "높음만": "1", "전체": "-1,0,1"}
+    country = "kr,us" if scope == "한국·미국 중심" else "kr,us,eu,jp,cn,gb,hk"
+    widget = """
+    <div class="tradingview-widget-container" style="height:640px;">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript"
+        src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+      {
+        "colorTheme": "light",
+        "isTransparent": true,
+        "locale": "kr",
+        "countryFilter": "%COUNTRY%",
+        "importanceFilter": "%IMP%",
+        "width": "100%",
+        "height": 620
+      }
+      </script>
+    </div>
+    """.replace("%COUNTRY%", country).replace("%IMP%", imp_map[imp])
+    components.html(widget, height=660, scrolling=True)
+    st.caption("경제지표 일정은 발표 시각·수치가 지연되거나 변경될 수 있습니다. 투자 참고용입니다.")
 
 st.divider()
 st.caption("유의사항: 투자 참고 용도이며, 투자자문 및 매매 권유가 아닙니다. 투자의 최종 책임은 본인에게 있습니다.")
