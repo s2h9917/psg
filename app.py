@@ -375,11 +375,13 @@ def render_card(i, row, hero=False):
     st.write("")
 
 
+# --------------------------- 시장 상태(공통, 탭 위) ---------------------------
+render_breadth()
+
 # --------------------------- 탭 ---------------------------
 tab_rec, tab_hist, tab_bt = st.tabs(["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**"])
 
 with tab_rec:
-    render_breadth()
     _hr = int(now.strftime("%H"))
     session_label = st.radio(
         "추천 세션",
