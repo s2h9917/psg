@@ -71,7 +71,7 @@ source = "실시간 (네이버+야후)"
 markets = ["KOSPI", "KOSDAQ"]
 cap_n, short_k = 200, 14
 w_fund, w_supply, w_sent, w_upside = 0.40, 0.20, 0.15, 0.25
-supply_days, top_n = 20, 3
+supply_days, per_market = 20, 3
 oneshot, auto_save = False, True
 nv_id = nv_secret = ""
 
@@ -103,7 +103,7 @@ else:
     sb.info(f"펀더멘털 {w_fund/_t*100:.0f}% · 수급 {w_supply/_t*100:.0f}% · "
             f"심리 {w_sent/_t*100:.0f}% · 상승여력 {w_upside/_t*100:.0f}%")
     supply_days = sb.slider("수급 집계 일수", 5, 40, 20, 5)
-    top_n = sb.number_input("추천 종목 수", 1, 10, 3)
+    per_market = sb.number_input("시장별 추천 수 (코스피/코스닥 각각)", 1, 5, 3)
     oneshot = sb.checkbox("🎯 원샷 모드 (1위만 크게)", value=False)
     auto_save = sb.checkbox("분석 실행 시 내역 자동 저장", value=True)
     with sb.expander("📰 뉴스 감성 (선택)"):
@@ -153,13 +153,27 @@ def pick_shortlist(uni, k, markets):
     return short.reset_index(drop=True)
 
 
+def top_by_market(res, per_market, markets):
+    """시장별 상위 per_market 종목 선정 (코스피 3 + 코스닥 3)."""
+    mkts = [m for m in markets if "시장" in res.columns and m in set(res["시장"].unique())]
+    if not mkts:
+        return res.head(per_market).reset_index(drop=True)
+    parts = [res[res["시장"] == m].head(per_market) for m in mkts]
+    return pd.concat(parts).reset_index(drop=True)
+
+
 # --------------------------- 파이프라인 ---------------------------
-def run_pipeline():
+def run_pipeline(session="close"):
+    # 세션별 가중치: 시초가=수급·모멘텀 중심 / 종가=관리자 설정(밸런스형)
+    if session == "open":
+        wf, wsup, wse, wup = 0.15, 0.40, 0.35, 0.10
+    else:
+        wf, wsup, wse, wup = w_fund, w_supply, w_sent, w_upside
     date_key = now.strftime("%Y%m%d")
     live = source.startswith("실시간")
     uni = load_universe(source, tuple(markets or ["KOSPI"]), cap_n, date_key)
     asof = uni.attrs.get("asof", date_key) if hasattr(uni, "attrs") else date_key
-    use_supply = w_supply > 0
+    use_supply = wsup > 0
 
     if live:
         short = pick_shortlist(uni, short_k, markets or ["KOSPI"])
@@ -224,14 +238,14 @@ def run_pipeline():
         buys.append(b); tgts.append(t); stops.append(s); ups.append(u)
     df["buy"], df["target"], df["stop"], df["upside"] = buys, tgts, stops, ups
 
-    res = E.finalize(df, w_fund, w_sent, w_upside, w_supply)
+    res = E.finalize(df, wf, wse, wup, wsup)
     res.attrs["asof"] = asof
     return res
 
 
-def save_current_to_history(top_df, ran_at):
+def save_current_to_history(top_df, ran_at, gubun=""):
     rows = pd.DataFrame({
-        "추천일시": ran_at, "티커": top_df["티커"].astype(str), "종목명": top_df["종목명"],
+        "추천일시": ran_at, "구분": gubun, "티커": top_df["티커"].astype(str), "종목명": top_df["종목명"],
         "추천시_현재가": top_df["현재가"].astype(int), "매수가": top_df["buy"].astype(int),
         "목표가": top_df["target"].astype(int), "손절가": top_df["stop"].astype(int),
         "종합점수": top_df["total_score"].round(1),
@@ -294,41 +308,57 @@ def render_card(i, row, hero=False):
 tab_rec, tab_hist, tab_bt = st.tabs(["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**"])
 
 with tab_rec:
+    _hr = int(now.strftime("%H"))
+    session_label = st.radio(
+        "추천 세션",
+        ["🌅 시초가 추천 (장 시작 전 08:30~08:50)", "🌆 종가 추천 (장 마감 전 15:00~15:20)"],
+        index=(0 if _hr < 12 else 1), horizontal=True)
+    session = "open" if "시초가" in session_label else "close"
+    session_name = "시초가" if session == "open" else "종가"
+
     if st.button("🚀 오늘의 추천 종목 분석 실행하기", type="primary"):
         if source.startswith("실시간"):
             with st.spinner("머니캐치 알고리즘 로딩 중..."):
                 try:
-                    result = run_pipeline()
-                    note = f"실시간(네이버+야후) · 기준일 {result.attrs.get('asof','')}"
+                    result = run_pipeline(session)
                 except Exception as ex:
                     st.error(f"실시간 연동 실패 → 데모로 전환합니다.\n\n오류: {ex}")
                     globals()["source"] = "데모 데이터"
-                    result = run_pipeline(); note = "⚠️ 데모 데이터 (실시간 실패)"
+                    result = run_pipeline(session)
         else:
-            result = run_pipeline(); note = "데모 데이터"
+            result = run_pipeline(session)
         ran_at = now.strftime("%Y-%m-%d %H:%M")
-        st.session_state.update(result=result, ran_at=ran_at, note=note, top_n=int(top_n))
+        picks = top_by_market(result, per_market, markets or ["KOSPI", "KOSDAQ"])
+        st.session_state.update(result=result, picks=picks, ran_at=ran_at,
+                                session_name=session_name, per_market=int(per_market))
         if auto_save:
-            save_current_to_history(result.head(int(top_n)), ran_at)
+            save_current_to_history(picks, ran_at, session_name)
             st.session_state["saved_msg"] = ran_at
 
     if "result" in st.session_state:
         result = st.session_state["result"]; ran_at = st.session_state["ran_at"]
-        top = result.head(st.session_state.get("top_n", int(top_n))).reset_index(drop=True)
-        st.success(f"분석 완료! · MTN PICK '머니캐치' · 추천일시 {ran_at}")
+        picks = st.session_state.get("picks")
+        sname = st.session_state.get("session_name", "종가")
+        st.success(f"분석 완료! · MTN PICK '머니캐치' ({sname}) · 추천일시 {ran_at}")
         if st.session_state.pop("saved_msg", None):
             st.toast("📌 추천 내역이 저장되었습니다.")
 
         if oneshot:
-            st.subheader("🎯 원샷 — 오늘의 최우선 1종목")
-            render_card(0, top.iloc[0], hero=True)
+            st.subheader(f"🎯 원샷 — {sname} 최우선 1종목")
+            render_card(0, result.head(1).reset_index(drop=True).iloc[0], hero=True)
         else:
-            st.subheader(f"🏆 오늘의 추천 종목 TOP {len(top)}")
-            for i, row in top.iterrows():
-                render_card(i, row)
+            icon = "🌅" if sname == "시초가" else "🌆"
+            st.subheader(f"{icon} {sname} 추천 종목 (코스피·코스닥 각 {st.session_state.get('per_market', per_market)}종목)")
+            for mcode, mlabel in [("KOSPI", "🔵 코스피"), ("KOSDAQ", "🟢 코스닥")]:
+                part = (picks[picks["시장"] == mcode].reset_index(drop=True)
+                        if (picks is not None and "시장" in picks.columns) else None)
+                if part is not None and len(part):
+                    st.markdown(f"### {mlabel} TOP {len(part)}")
+                    for i, row in part.iterrows():
+                        render_card(i, row)
 
         if st.button("📌 이 추천 내역 저장"):
-            save_current_to_history(top, ran_at); st.toast("📌 저장 완료!")
+            save_current_to_history(picks, ran_at, sname); st.toast("📌 저장 완료!")
 
         with st.expander("📋 정밀분석 후보 전체 순위표"):
             cols = ["종목명", "티커", "시장", "현재가", "buy", "target", "stop", "upside",
@@ -383,8 +413,11 @@ with tab_hist:
         dates = sorted(enr["추천일시"].unique(), reverse=True)
         pick = st.multiselect("추천일시 필터", dates, default=[])
         view = enr[enr["추천일시"].isin(pick)] if pick else enr
-        disp = view[["추천일시", "종목명", "티커", "매수가", "목표가", "손절가",
-                     "현재가", "수익률", "목표까지", "상태", "종합점수"]].copy()
+        base_cols = ["추천일시", "종목명", "티커", "매수가", "목표가", "손절가",
+                     "현재가", "수익률", "목표까지", "상태", "종합점수"]
+        if "구분" in view.columns:
+            base_cols.insert(1, "구분")
+        disp = view[base_cols].copy()
         disp = disp.rename(columns={"수익률": "수익률(%)", "목표까지": "목표까지(%)"})
 
         def _color(v):

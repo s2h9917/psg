@@ -55,6 +55,8 @@ DEMO_UNIVERSE = pd.DataFrame([
 DEMO_UNIVERSE["ROE"] = (DEMO_UNIVERSE["EPS"] / DEMO_UNIVERSE["BPS"] * 100).round(2)
 # 데모용 수급강도(순매수/상장주식수 근사): 모멘텀과 대략 연동되도록 합성
 DEMO_UNIVERSE["수급강도"] = (DEMO_UNIVERSE["등락률"] / 1000).round(4)
+# 데모용 시장 구분(코스피/코스닥 혼합)
+DEMO_UNIVERSE["시장"] = (["KOSPI"] * 12 + ["KOSDAQ"] * (len(DEMO_UNIVERSE) - 12))
 
 
 # ====================================================================
@@ -563,7 +565,7 @@ def get_current_prices(tickers):
 # ====================================================================
 # 추천 내역 저장/조회 (CSV 파일 영속화)
 # ====================================================================
-HISTORY_COLUMNS = ["추천일시", "티커", "종목명", "추천시_현재가",
+HISTORY_COLUMNS = ["추천일시", "구분", "티커", "종목명", "추천시_현재가",
                    "매수가", "목표가", "손절가", "종합점수"]
 DEFAULT_HISTORY_PATH = "recommendation_history.csv"
 

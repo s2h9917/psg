@@ -40,14 +40,26 @@ def pick_shortlist(uni, k, markets):
     return short.reset_index(drop=True)
 
 
+def _top_by_market(res, per_market, markets):
+    mkts = [m for m in markets if "시장" in res.columns and m in set(res["시장"].unique())]
+    if not mkts:
+        return res.head(per_market).reset_index(drop=True)
+    parts = [res[res["시장"] == m].head(per_market) for m in mkts]
+    return pd.concat(parts).reset_index(drop=True)
+
+
 def build_recommendations():
+    session = _env("SESSION", "close")            # 'open'(시초가) / 'close'(종가)
     markets = tuple(_env("MARKETS", "KOSPI,KOSDAQ").split(","))
     cap_n = int(_env("CAP_N", "200"))
     short_k = int(_env("SHORT_K", "14"))
-    top_n = int(_env("TOP_N", "3"))
+    per_market = int(_env("PER_MARKET", "3"))
     supply_days = int(_env("SUPPLY_DAYS", "20"))
-    w = (float(_env("W_FUND", "0.4")), float(_env("W_SENT", "0.15")),
-         float(_env("W_UPSIDE", "0.25")), float(_env("W_SUPPLY", "0.2")))
+    if session == "open":                          # 시초가: 수급·모멘텀 중심
+        w = (0.15, 0.35, 0.10, 0.40)               # (fund, sent, upside, supply)
+    else:                                          # 종가: 밸런스형
+        w = (float(_env("W_FUND", "0.4")), float(_env("W_SENT", "0.15")),
+             float(_env("W_UPSIDE", "0.25")), float(_env("W_SUPPLY", "0.2")))
     demo = _env("DEMO", "0") == "1"
 
     if demo:
@@ -88,12 +100,14 @@ def build_recommendations():
         b.append(bb); t.append(tt); s.append(ss); u.append(uu)
     df["buy"], df["target"], df["stop"], df["upside"] = b, t, s, u
     res = E.finalize(df, w[0], w[1], w[2], w[3])
-    return res.head(top_n), asof
+    picks = _top_by_market(res, per_market, list(markets))
+    sname = "시초가" if session == "open" else "종가"
+    return picks, asof, sname
 
 
-def format_message(top, asof):
+def format_message(top, asof, sname):
     medals = ["🥇", "🥈", "🥉"]
-    lines = [f"💰 <b>머니캐치</b> — MTN AI PICK (기준일 {asof})", ""]
+    lines = [f"💰 <b>머니캐치</b> — MTN AI PICK · {sname} (기준일 {asof})", ""]
     for i, r in top.iterrows():
         m = medals[i] if i < 3 else "🔹"
         mkt = r.get("시장", "")
@@ -122,18 +136,18 @@ def send_telegram(text):
 
 
 def main():
-    top, asof = build_recommendations()
+    top, asof, sname = build_recommendations()
     ran_at = E.now_kst().strftime("%Y-%m-%d %H:%M")
     # 추천 내역 저장(누적 트랙레코드) — 워크플로가 이 CSV를 커밋하면 영구 보존됩니다.
     try:
         E.append_history(pd.DataFrame({
-            "추천일시": ran_at, "티커": top["티커"].astype(str), "종목명": top["종목명"],
+            "추천일시": ran_at, "구분": sname, "티커": top["티커"].astype(str), "종목명": top["종목명"],
             "추천시_현재가": top["현재가"].astype(int), "매수가": top["buy"].astype(int),
             "목표가": top["target"].astype(int), "손절가": top["stop"].astype(int),
             "종합점수": top["total_score"].round(1)}), HISTORY_PATH)
     except Exception as e:
         print("내역 저장 경고:", e)
-    send_telegram(format_message(top, asof))
+    send_telegram(format_message(top, asof, sname))
 
 
 if __name__ == "__main__":
