@@ -379,7 +379,8 @@ def render_card(i, row, hero=False):
 render_breadth()
 
 # --------------------------- 탭 ---------------------------
-tab_rec, tab_hist, tab_bt = st.tabs(["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**"])
+tab_rec, tab_hist, tab_bt, tab_fv = st.tabs(
+    ["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**", "**💎 적정주가**"])
 
 with tab_rec:
     _hr = int(now.strftime("%H"))
@@ -544,6 +545,84 @@ with tab_bt:
                              color="#f76707")
             st.dataframe(bt, use_container_width=True, hide_index=True)
         st.caption("과거 수익률은 미래 수익을 보장하지 않습니다.")
+
+with tab_fv:
+    st.subheader("💎 적정주가 분석 (다중 모델)")
+    st.caption("종목명 또는 6자리 코드를 입력하면 여러 방식의 적정주가와 현재가 대비 저평가/고평가를 계산합니다.")
+    q = st.text_input("종목명 또는 코드", placeholder="예: 삼성전자 또는 005930")
+    with st.expander("⚙️ 계산 가정 (선택 조정)"):
+        fc1, fc2, fc3 = st.columns(3)
+        rf = fc1.number_input("무위험수익률 rf", 0.0, 0.10, 0.03, 0.005, format="%.3f")
+        mrp = fc2.number_input("시장위험프리미엄 mrp", 0.0, 0.15, 0.055, 0.005, format="%.3f")
+        g = fc3.number_input("장기 성장률 g", 0.0, 0.08, 0.02, 0.005, format="%.3f")
+        tp_in = st.number_input("목표 PER (0=자동)", 0.0, 100.0, 0.0, 0.5)
+
+    if st.button("💎 적정주가 분석하기", type="primary"):
+        if not q.strip():
+            st.warning("종목명 또는 코드를 입력하세요.")
+        else:
+            with st.spinner("적정주가 계산 중..."):
+                try:
+                    if source.startswith("실시간"):
+                        info = E.resolve_ticker(q)
+                        if info is None:
+                            st.error("해당 종목을 찾을 수 없습니다. 정확한 종목명 또는 6자리 코드를 입력해주세요.")
+                            st.stop()
+                        fund = E.fetch_fundamentals_naver(info["code"])
+                        per, pbr, roe, div = fund["PER"], fund["PBR"], fund["ROE"], fund.get("DIV")
+                    else:  # 데모
+                        d = E.DEMO_UNIVERSE
+                        row = d[d["종목명"].str.contains(q.strip(), na=False) | (d["티커"] == q.strip())]
+                        if row.empty:
+                            st.error("데모 데이터에서 종목을 찾을 수 없습니다. (예: 삼성전자)")
+                            st.stop()
+                        r0 = row.iloc[0]
+                        info = {"code": r0["티커"], "name": r0["종목명"], "market": r0["시장"], "current": float(r0["현재가"])}
+                        per, pbr, roe, div = float(r0["PER"]), float(r0["PBR"]), float(r0["ROE"]), float(r0["DIV"])
+                except Exception as ex:
+                    st.error(f"조회 실패: {ex}"); st.stop()
+
+            cur = info["current"]
+            import numpy as _np
+            div = 0.0 if (div is None or (isinstance(div, float) and _np.isnan(div))) else div
+            target_per = None if tp_in == 0 else tp_in
+            models, notes, meta = E.fair_value(cur, per, pbr, roe, div, rf, mrp, g, target_per)
+
+            if not models:
+                st.warning("이 종목은 공개 재무(PER/PBR)가 부족해 적정주가를 계산할 수 없습니다.")
+            else:
+                st.markdown(f"### {info['name']} ({info['code']}) · KRW")
+                integ = models.get("통합")
+                s1, s2, s3 = st.columns(3)
+                s1.metric("현재가", f"{cur:,.0f}원")
+                if integ:
+                    diff = (cur - integ) / integ * 100
+                    verdict = "🔴 저평가" if diff < -5 else ("🔵 고평가" if diff > 5 else "⚪ 적정")
+                    s2.metric("통합 적정주가", f"{integ:,.0f}원", f"{-diff:+.1f}% (현재가)")
+                    s3.metric("평가", verdict)
+                st.divider()
+                order = ["통합", "수익기반", "자산/이익력", "배당기반"]
+                labels = {"통합": "A. 통합(가중평균)", "수익기반": "B. 수익기반",
+                          "자산/이익력": "C. 자산/이익력", "배당기반": "D. 배당기반"}
+                for k in order:
+                    if k in models:
+                        v = models[k]; diff = (cur - v) / v * 100
+                        cc1, cc2 = st.columns([1, 2])
+                        tag = "🔴 저평가" if diff < -5 else ("🔵 고평가" if diff > 5 else "⚪ 적정")
+                        cc1.metric(labels[k], f"{v:,.0f}원", f"{-diff:+.1f}%")
+                        cc2.markdown(f"<div style='padding-top:8px;color:#555;font-size:13.5px'>"
+                                     f"{notes.get(k,'')}<br><span style='color:#888'>현재가 대비 {tag}</span></div>",
+                                     unsafe_allow_html=True)
+                with st.expander("🔍 계산 상세"):
+                    st.markdown(
+                        f"- 현재가 **{cur:,.0f}원** · PER **{per}** · PBR **{pbr}** · "
+                        f"ROE **{meta['roe']}%** · 배당수익률 **{div}%**\n"
+                        f"- 요구수익률 r = rf {rf*100:.1f}% + mrp {mrp*100:.1f}% = **{meta['r']*100:.1f}%** (베타 1 가정)\n"
+                        f"- 목표 PER **{meta['target_per']}** · EPS **{meta['eps']:,.0f}** · "
+                        f"BPS **{(meta['bps'] or 0):,.0f}** · DPS **{meta['dps']:,.0f}** · 성장률 g **{g*100:.1f}%**\n"
+                        f"- 데이터: 네이버(PER/PBR/배당) + 스냅샷(시세) · **투자자문 아님**")
+                st.caption("※ 현금흐름(EV/EBITDA) 모델은 재무제표(DART) 데이터가 필요해 이번 버전에서는 제외했습니다. "
+                           "적정주가는 가정에 민감한 참고값이며 매매 권유가 아닙니다.")
 
 st.divider()
 st.caption("유의사항: 투자 참고 용도이며, 투자자문 및 매매 권유가 아닙니다. 투자의 최종 책임은 본인에게 있습니다.")

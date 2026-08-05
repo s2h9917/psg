@@ -698,3 +698,69 @@ def enrich_history(hist_df, current_prices=None):
 
     df["상태"] = df.apply(_status, axis=1)
     return df
+
+
+# ====================================================================
+# 적정주가 다중 모델 (이핀 아띠스캐너 참고 · 무료 데이터 버전)
+# ====================================================================
+def resolve_ticker(query):
+    """종목명 또는 6자리 코드로 (코드·종목명·시장·현재가) 조회. 없으면 None."""
+    raw, _ = _load_market_snapshot()
+    raw["Code"] = raw["Code"].astype(str)
+    q = str(query).strip()
+    if q.isdigit() and len(q) == 6:
+        row = raw[raw["Code"] == q]
+    else:
+        row = raw[raw["Name"] == q]
+        if row.empty:
+            row = raw[raw["Name"].str.contains(q, na=False)]
+    if row.empty:
+        return None
+    r = row.iloc[0]
+    return {"code": str(r["Code"]), "name": str(r["Name"]),
+            "market": str(r["Market"]), "current": float(r["Close"])}
+
+
+def fair_value(current, per, pbr, roe, div, rf=0.03, mrp=0.055, g=0.02, target_per=None):
+    """
+    현재가 + 네이버 재무(PER·PBR·ROE·배당수익률)로 여러 방식의 적정주가를 산출.
+    반환: (models dict, meta dict)
+    - 수익기반: 목표PER × EPS
+    - 자산/이익력: BPS × 정당PBR( (ROE-g)/(r-g) )
+    - 배당기반: DDM = DPS×(1+g)/(r-g)
+    - 통합: 위 값들의 가중평균
+    r(요구수익률) = rf + mrp  (베타 1 가정)
+    """
+    r = rf + mrp
+    eps = current / per if (per and per > 0) else None
+    bps = current / pbr if (pbr and pbr > 0) else None
+    roe_ = roe if (roe is not None and not (isinstance(roe, float) and np.isnan(roe))) else None
+    dps = current * (div / 100.0) if (div and div > 0) else 0.0
+
+    if target_per is None:
+        target_per = round(min(30.0, max(6.0, 8 + (roe_ or 8) * 0.6)), 2)
+
+    models = {}
+    notes = {}
+    if eps:
+        models["수익기반"] = target_per * eps
+        notes["수익기반"] = "최근 벌어들인 순이익(EPS)에 목표 PER을 적용한 값이에요. 단기 실적에 민감합니다."
+    if bps and roe_ is not None and r > g:
+        jpbr = max(0.2, min(5.0, (roe_ / 100.0 - g) / (r - g)))
+        models["자산/이익력"] = bps * jpbr
+        notes["자산/이익력"] = "순자산(BPS)에 수익성(ROE)을 반영한 값이에요. ROE가 낮으면 낮게 나옵니다."
+    if dps > 0 and r > g:
+        models["배당기반"] = dps * (1 + g) / (r - g)
+        notes["배당기반"] = "미래 배당을 오늘 가치로 환산한 값(DDM)이에요. 성장주엔 낮게 나올 수 있어요."
+
+    weights = {"수익기반": 0.5, "자산/이익력": 0.3, "배당기반": 0.2}
+    avail = {k: models[k] for k in weights if k in models}
+    if avail:
+        tw = sum(weights[k] for k in avail)
+        models["통합"] = sum(models[k] * weights[k] for k in avail) / tw
+        notes["통합"] = "여러 방식을 종합한 가중평균 가격이에요. 특정 방식의 편향을 줄여줍니다."
+
+    meta = {"r": r, "eps": eps, "bps": bps, "dps": dps,
+            "target_per": target_per, "rf": rf, "mrp": mrp, "g": g,
+            "per": per, "pbr": pbr, "roe": roe_, "div": div}
+    return models, notes, meta
