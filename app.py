@@ -550,12 +550,15 @@ with tab_fv:
     st.subheader("💎 적정주가 분석 (다중 모델)")
     st.caption("종목명 또는 6자리 코드를 입력하면 여러 방식의 적정주가와 현재가 대비 저평가/고평가를 계산합니다.")
     q = st.text_input("종목명 또는 코드", placeholder="예: 삼성전자 또는 005930")
-    with st.expander("⚙️ 계산 가정 (선택 조정)"):
-        fc1, fc2, fc3 = st.columns(3)
-        rf = fc1.number_input("무위험수익률 rf", 0.0, 0.10, 0.03, 0.005, format="%.3f")
-        mrp = fc2.number_input("시장위험프리미엄 mrp", 0.0, 0.15, 0.055, 0.005, format="%.3f")
-        g = fc3.number_input("장기 성장률 g", 0.0, 0.08, 0.02, 0.005, format="%.3f")
-        tp_in = st.number_input("목표 PER (0=자동)", 0.0, 100.0, 0.0, 0.5)
+    # 기본 가정값(사용자 공통). 관리자만 조정 가능.
+    rf, mrp, g, tp_in = 0.03, 0.055, 0.02, 0.0
+    if is_admin:
+        with st.expander("⚙️ 계산 가정 (관리자 전용)"):
+            fc1, fc2, fc3 = st.columns(3)
+            rf = fc1.number_input("무위험수익률 rf", 0.0, 0.10, 0.03, 0.005, format="%.3f")
+            mrp = fc2.number_input("시장위험프리미엄 mrp", 0.0, 0.15, 0.055, 0.005, format="%.3f")
+            g = fc3.number_input("장기 성장률 g", 0.0, 0.08, 0.02, 0.005, format="%.3f")
+            tp_in = st.number_input("목표 PER (0=자동)", 0.0, 100.0, 0.0, 0.5)
 
     if st.button("💎 적정주가 분석하기", type="primary"):
         if not q.strip():
