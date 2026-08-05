@@ -2,13 +2,18 @@ name: daily-pick
 
 on:
   schedule:
-    # 매일 06:00 UTC = 15:00 KST 에 실행 (장 마감 15:30 직전)
-    # ※ GitHub Actions 스케줄은 수 분 지연될 수 있어 보통 15:00~15:20 사이 실행됩니다.
-    - cron: '0 6 * * *'
-  workflow_dispatch: {}          # 수동 실행 버튼
+    - cron: '40 23 * * *'    # 08:40 KST(전일 23:40 UTC) → 시초가(open)
+    - cron: '0 6 * * *'      # 15:00 KST(당일 06:00 UTC) → 종가(close)
+  workflow_dispatch:
+    inputs:
+      session:
+        description: '세션 선택 (open=시초가 / close=종가)'
+        default: 'close'
+        type: choice
+        options: [open, close]
 
 permissions:
-  contents: write                # 추천 내역 CSV 커밋용
+  contents: write
 
 jobs:
   run:
@@ -25,12 +30,14 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MARKETS: 'KOSPI,KOSDAQ'
-          TOP_N: '3'
+          PER_MARKET: '3'
+          # 오전 스케줄(23:40 UTC)=시초가, 그 외=종가. 수동 실행 시 입력값 우선.
+          SESSION: ${{ github.event.inputs.session || (github.event.schedule == '40 23 * * *' && 'open' || 'close') }}
         run: python notify.py
       - name: Commit history
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add recommendation_history.csv || true
-          git commit -m "auto: daily picks $(date +%F)" || echo "no changes"
+          git commit -m "auto: ${SESSION:-picks} $(date +%F)" || echo "no changes"
           git push || echo "push skipped"
