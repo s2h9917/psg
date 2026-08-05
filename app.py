@@ -230,22 +230,27 @@ def run_pipeline(session="close"):
         for i, (_, r) in enumerate(short.iterrows()):
             m = fetch_metrics_cached(r["티커"], r["시장"], float(r["현재가"]),
                                      float(r["등락률"]), date_key)
-            cur = m["현재가"] or r["현재가"]
+            cur = m.get("현재가") or r["현재가"]
             # 수급강도 = 최근 N일 기관+외국인 순매수 ÷ 상장주식수
             supply_intensity = None
             if use_supply:
                 sup = fetch_supply_cached(r["티커"], supply_days, date_key)
-                if sup["net"] is not None and cur:
+                if sup.get("net") is not None and cur:
                     shares_out = (float(r["시가총액"]) * 1e8) / cur
                     if shares_out > 0:
                         supply_intensity = sup["net"] / shares_out
+            _tech = {"high52": m.get("high52") or cur * 1.2,
+                     "ma20": m.get("ma20") or cur * 0.98,
+                     "low60": m.get("low60") or cur * 0.9}
             rows.append({
                 "티커": r["티커"], "종목명": r["종목명"], "시장": r["시장"], "시가총액": r["시가총액"],
-                "현재가": cur, "등락률": m["등락률"], "PER": m["PER"], "PBR": m["PBR"],
-                "ROE": m["ROE"], "DIV": m["DIV"], "수급강도": supply_intensity,
-                "vol_ratio": m["vol_ratio"], "spark": m["spark"],
-                "rsi": m["rsi"], "ma20": m["ma20"], "ma60": m["ma60"], "high52": m["high52"],
-                "_tech": {"high52": m["high52"], "ma20": m["ma20"], "low60": m["low60"]},
+                "현재가": cur, "등락률": m.get("등락률", 0.0),
+                "PER": m.get("PER"), "PBR": m.get("PBR"),
+                "ROE": m.get("ROE"), "DIV": m.get("DIV"), "수급강도": supply_intensity,
+                "vol_ratio": m.get("vol_ratio"), "spark": m.get("spark"),
+                "rsi": m.get("rsi"), "ma20": _tech["ma20"],
+                "ma60": m.get("ma60"), "high52": _tech["high52"],
+                "_tech": _tech,
             })
             prog.progress((i + 1) / n, text=f"개별 지표 분석 중... ({i+1}/{n})")
         prog.empty()
