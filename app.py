@@ -172,12 +172,11 @@ def render_breadth():
     st.markdown("#### 🧭 오늘의 시장 상태")
     cols = st.columns(4)
     cols[0].metric("시장 심리", br["mood"])
-    cols[1].metric("전체 상승비율", f"{t['ratio']:.0f}%", f"평균 {t['avg']:+.2f}%")
+    cols[1].metric("전체 상승비율", f"{t['ratio']:.0f}%")
     for i, (mc, ml) in enumerate([("KOSPI", "코스피"), ("KOSDAQ", "코스닥")]):
         if mc in br["markets"]:
             d = br["markets"][mc]
-            cols[2 + i].metric(f"{ml} 상승/하락", f"{d['adv']} / {d['dec']}",
-                               f"{d['ratio']:.0f}% · {d['avg']:+.2f}%")
+            cols[2 + i].metric(f"{ml} 상승/하락", f"{d['adv']} / {d['dec']}")
     ks = br["markets"].get("KOSPI", {}).get("ratio", 0)
     kq = br["markets"].get("KOSDAQ", {}).get("ratio", 0)
     stronger = "코스피" if ks >= kq else "코스닥"
