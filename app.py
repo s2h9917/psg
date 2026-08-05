@@ -30,6 +30,7 @@ st.markdown("""
 .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;
       background:#eef2ff;color:#4c6ef5;margin-right:6px;}
 .mkt{background:#e6fcf5;color:#0ca678;} .hot{background:#fff0f0;color:#e03131;}
+.sig{background:#fff4e6;color:#e8590c;} .rsipill{background:#eef2ff;color:#4c6ef5;}
 .mascot{font-size:13px;color:#5c7cfa;background:#eef2ff;border-radius:10px;padding:6px 12px;display:inline-block;}
 button[data-baseweb="tab"] p{font-weight:800 !important;font-size:16px !important;}
 </style>
@@ -135,6 +136,53 @@ def fetch_supply_cached(ticker, ndays, date_key):
 def load_current_prices(tickers, date_key):
     return E.get_current_prices(list(tickers))
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_breadth(markets_key, date_key):
+    return E.market_breadth(tuple(markets_key))
+
+
+def demo_breadth():
+    d = E.DEMO_UNIVERSE
+    out = {"asof": now.strftime("%Y-%m-%d"), "markets": {}}
+    for m in ["KOSPI", "KOSDAQ"]:
+        sub = d[d["시장"] == m]["등락률"]
+        adv, dec = int((sub > 0).sum()), int((sub < 0).sum())
+        ratio = adv / (adv + dec) * 100 if (adv + dec) else 50.0
+        out["markets"][m] = {"adv": adv, "dec": dec, "total": len(sub),
+                             "ratio": round(ratio, 1), "avg": round(float(sub.mean()), 2)}
+    allc = d["등락률"]
+    adv, dec = int((allc > 0).sum()), int((allc < 0).sum())
+    ratio = adv / (adv + dec) * 100 if (adv + dec) else 50.0
+    out["total"] = {"adv": adv, "dec": dec, "ratio": round(ratio, 1), "avg": round(float(allc.mean()), 2)}
+    out["mood"] = ("🔴 상승 우위 (강세)" if ratio >= 60 else
+                   "⚪ 혼조세" if ratio >= 45 else "🔵 하락 우위 (약세)")
+    return out
+
+
+def render_breadth():
+    try:
+        br = (load_breadth(tuple(markets or ["KOSPI", "KOSDAQ"]), now.strftime("%Y%m%d"))
+              if source.startswith("실시간") else demo_breadth())
+    except Exception:
+        return
+    t = br["total"]
+    st.markdown("#### 🧭 오늘의 시장 상태")
+    cols = st.columns(4)
+    cols[0].metric("시장 심리", br["mood"])
+    cols[1].metric("전체 상승비율", f"{t['ratio']:.0f}%", f"평균 {t['avg']:+.2f}%")
+    for i, (mc, ml) in enumerate([("KOSPI", "코스피"), ("KOSDAQ", "코스닥")]):
+        if mc in br["markets"]:
+            d = br["markets"][mc]
+            cols[2 + i].metric(f"{ml} 상승/하락", f"{d['adv']} / {d['dec']}",
+                               f"{d['ratio']:.0f}% · {d['avg']:+.2f}%")
+    ks = br["markets"].get("KOSPI", {}).get("ratio", 0)
+    kq = br["markets"].get("KOSDAQ", {}).get("ratio", 0)
+    stronger = "코스피" if ks >= kq else "코스닥"
+    st.caption(f"📝 오늘 국내 증시는 **{br['mood']}** 입니다. 상승 종목 비율은 "
+               f"코스피 {ks:.0f}%·코스닥 {kq:.0f}%로 **{stronger}**가 상대적으로 강합니다. (기준일 {br['asof']})")
+    st.divider()
+
 @st.cache_data(ttl=1800, show_spinner=False)
 def backtest_cached(pick_tuple, months, date_key):
     return E.backtest_picks(list(pick_tuple), months)
@@ -196,6 +244,7 @@ def run_pipeline(session="close"):
                 "현재가": cur, "등락률": m["등락률"], "PER": m["PER"], "PBR": m["PBR"],
                 "ROE": m["ROE"], "DIV": m["DIV"], "수급강도": supply_intensity,
                 "vol_ratio": m["vol_ratio"], "spark": m["spark"],
+                "rsi": m["rsi"], "ma20": m["ma20"], "ma60": m["ma60"], "high52": m["high52"],
                 "_tech": {"high52": m["high52"], "ma20": m["ma20"], "low60": m["low60"]},
             })
             prog.progress((i + 1) / n, text=f"개별 지표 분석 중... ({i+1}/{n})")
@@ -207,6 +256,10 @@ def run_pipeline(session="close"):
         import numpy as _np
         df["vol_ratio"] = [1.0 + abs(x)/10 for x in df["등락률"]]
         df["spark"] = df["현재가"].apply(lambda c: [round(c*(1+_np.sin(i/3)/25), 1) for i in range(30)])
+        df["ma20"] = df["현재가"] * 0.98
+        df["ma60"] = df["현재가"] * 0.95
+        df["high52"] = df["현재가"] * 1.22
+        df["rsi"] = df["등락률"].apply(lambda x: round(min(88, max(12, 50 + x * 3)), 1))
 
     # 시장 심리를 "보이는 최근 주가(스파크라인)" 기준 1개월 모멘텀으로 재계산 → 차트와 값 일치
     def _spark_mom(sp):
@@ -281,6 +334,18 @@ def render_card(i, row, hero=False):
       <span class="pill">{src_pill}</span>{hot}
     </div></div>""", unsafe_allow_html=True)
 
+    _tags = E.signal_tags(row)
+    _rsi = row.get("rsi")
+    _chips = ""
+    if _rsi is not None and pd.notna(_rsi):
+        _lvl = "과매수" if _rsi >= 70 else ("과매도" if _rsi <= 30 else "중립")
+        _chips += f'<span class="pill rsipill">과열도 RSI {_rsi:.0f} · {_lvl}</span>'
+    for _t in _tags:
+        if "과매" not in _t:
+            _chips += f'<span class="pill sig">{_t}</span>'
+    if _chips:
+        st.markdown(f'<div style="margin:-2px 0 8px;">{_chips}</div>', unsafe_allow_html=True)
+
     c1, c2 = st.columns([1.1, 1])
     with c1:
         m1, m2 = st.columns(2)
@@ -308,6 +373,7 @@ def render_card(i, row, hero=False):
 tab_rec, tab_hist, tab_bt = st.tabs(["**🎯 오늘의 추천**", "**📜 추천 내역**", "**📈 성과·백테스트**"])
 
 with tab_rec:
+    render_breadth()
     _hr = int(now.strftime("%H"))
     session_label = st.radio(
         "추천 세션",

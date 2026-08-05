@@ -176,6 +176,70 @@ def add_momentum_sentiment(df, news_scores=None):
 # ====================================================================
 # 기술적 지표 (최종 후보에만 적용)
 # ====================================================================
+def _rsi(close, period=14):
+    """단순 RSI(14). 데이터 부족 시 None."""
+    if close is None or len(close) < period + 1:
+        return None
+    delta = close.diff()
+    up = delta.clip(lower=0).rolling(period).mean()
+    down = (-delta.clip(upper=0)).rolling(period).mean()
+    rs = up / down.replace(0, np.nan)
+    rsi = 100 - 100 / (1 + rs)
+    v = rsi.dropna()
+    return round(float(v.iloc[-1]), 1) if len(v) else None
+
+
+def signal_tags(row):
+    """종목별 기술적 신호 태그(Finviz/알고픽 스타일)."""
+    tags = []
+    rsi = row.get("rsi")
+    if rsi is not None and pd.notna(rsi):
+        if rsi >= 70:
+            tags.append("🔴 과매수")
+        elif rsi <= 30:
+            tags.append("🔵 과매도")
+    cur, h = row.get("현재가"), row.get("high52")
+    ma20, ma60 = row.get("ma20"), row.get("ma60")
+    if cur and h and cur >= h * 0.95:
+        tags.append("🚀 신고가근접")
+    if cur and ma20 and ma60:
+        if cur > ma20 > ma60:
+            tags.append("📈 정배열")
+        elif ma20 > ma60:
+            tags.append("✨ 골든크로스")
+    vr = row.get("vol_ratio")
+    if vr is not None and pd.notna(vr) and vr >= 2:
+        tags.append("🔥 거래량급증")
+    return tags
+
+
+def market_breadth(markets=("KOSPI", "KOSDAQ")):
+    """전종목 스냅샷으로 시장 브레드스(상승/하락 비율 등)와 코멘트 산출."""
+    raw, asof = _load_market_snapshot()
+    raw = raw[raw["Market"].isin(list(markets))].copy()
+    raw["chg"] = pd.to_numeric(raw["ChagesRatio"], errors="coerce")
+    out = {"asof": asof, "markets": {}}
+    for m in markets:
+        sub = raw[raw["Market"] == m]["chg"].dropna()
+        adv, dec = int((sub > 0).sum()), int((sub < 0).sum())
+        ratio = adv / (adv + dec) * 100 if (adv + dec) else 50.0
+        out["markets"][m] = {"adv": adv, "dec": dec, "total": len(sub),
+                             "ratio": round(ratio, 1),
+                             "avg": round(float(sub.mean()), 2) if len(sub) else 0.0}
+    allc = raw["chg"].dropna()
+    adv, dec = int((allc > 0).sum()), int((allc < 0).sum())
+    ratio = adv / (adv + dec) * 100 if (adv + dec) else 50.0
+    out["total"] = {"adv": adv, "dec": dec, "ratio": round(ratio, 1),
+                    "avg": round(float(allc.mean()), 2) if len(allc) else 0.0}
+    if ratio >= 60:
+        out["mood"] = "🔴 상승 우위 (강세)"
+    elif ratio >= 45:
+        out["mood"] = "⚪ 혼조세"
+    else:
+        out["mood"] = "🔵 하락 우위 (약세)"
+    return out
+
+
 def _yf_symbol(ticker, market):
     return f"{ticker}.{'KQ' if market == 'KOSDAQ' else 'KS'}"
 
@@ -234,8 +298,8 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
     sym = _yf_symbol(ticker, market)
     m = {"PER": np.nan, "PBR": np.nan, "ROE": np.nan, "DIV": np.nan,
          "현재가": fallback_price, "등락률": fallback_chg,
-         "high52": None, "ma20": None, "low60": None,
-         "vol_ratio": None, "spark": None}
+         "high52": None, "ma20": None, "ma60": None, "low60": None,
+         "rsi": None, "vol_ratio": None, "spark": None}
 
     # --- 펀더멘털: 네이버 (신뢰도 높음) ---
     try:
@@ -255,6 +319,8 @@ def fetch_metrics(ticker, market="KOSPI", fallback_price=None, fallback_chg=None
             m["high52"] = float(close.max())
             m["low60"] = float(close.tail(60).min())
             m["ma20"] = float(close.tail(20).mean())
+            m["ma60"] = float(close.tail(60).mean())
+            m["rsi"] = _rsi(close)
             if len(close) > 21:
                 m["등락률"] = (cur / float(close.iloc[-21]) - 1) * 100
             m["spark"] = [round(float(x), 2) for x in close.tail(60).tolist()]
