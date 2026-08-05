@@ -177,7 +177,7 @@ def run_pipeline(session="close"):
 
     if live:
         short = pick_shortlist(uni, short_k, markets or ["KOSPI"])
-        prog = st.progress(0.0, text="네이버·야후에서 개별 지표 분석 중...")
+        prog = st.progress(0.0, text="머니캐치 알고리즘이 개별 지표 분석 중...")
         rows, n = [], len(short)
         for i, (_, r) in enumerate(short.iterrows()):
             m = fetch_metrics_cached(r["티커"], r["시장"], float(r["현재가"]),
@@ -450,7 +450,7 @@ with tab_bt:
         if st.button("📉 과거 수익률 확인"):
             picks = tuple((r["티커"], r.get("시장", "KOSPI"), r["종목명"])
                           for _, r in res.head(n_bt).iterrows())
-            with st.spinner("야후에서 과거 시세 조회 중..."):
+            with st.spinner("과거 시세 조회 중..."):
                 if source.startswith("실시간"):
                     bt = backtest_cached(picks, months, now.strftime("%Y%m%d"))
                 else:  # 데모: spark로 근사
