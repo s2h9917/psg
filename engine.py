@@ -820,3 +820,73 @@ def fetch_dashboard():
     }
     return {cat: [(label, _quote(sym)) for label, sym in items]
             for cat, items in groups.items()}
+
+
+# ====================================================================
+# 투자 심리 온도계 (공포·탐욕 지수) — 무료 데이터 합성
+# ====================================================================
+def _clip01(x):
+    return max(0.0, min(100.0, x))
+
+
+def fear_greed_index():
+    """
+    코스피 지수·환율·금 등으로 0(극단적 공포)~100(극단적 탐욕) 온도 산출.
+    구성: 모멘텀(120MA 이격) · 20일 추세 · 변동성(역) · 당일 강도 · 안전자산 선호(역)
+    반환: {"score":int, "label":str, "emoji":str, "components":[(name, val)...]}  실패 시 None
+    """
+    import yfinance as yf
+    try:
+        ks = yf.Ticker("^KS11").history(period="6mo")["Close"].dropna()
+        if len(ks) < 30:
+            return None
+        cur = float(ks.iloc[-1])
+        ma120 = float(ks.tail(120).mean())
+        ma20 = float(ks.tail(20).mean())
+
+        # 1) 모멘텀: 120일선 이격 (±10% → 0~100)
+        gap = (cur / ma120 - 1) * 100 if ma120 else 0
+        s_mom = _clip01(50 + gap * 5)
+
+        # 2) 20일 추세 (20일 수익률 ±10% → 0~100)
+        ret20 = (cur / float(ks.iloc[-20]) - 1) * 100 if len(ks) >= 20 else 0
+        s_trend = _clip01(50 + ret20 * 5)
+
+        # 3) 변동성(역): 최근 20일 일간수익률 표준편차 (낮으면 탐욕)
+        daily = ks.pct_change().dropna().tail(20)
+        vol = float(daily.std() * 100) if len(daily) else 1.5
+        s_vol = _clip01(100 - (vol - 0.5) / 2.5 * 100)   # 0.5%→100, 3%→0
+
+        # 4) 당일 강도 (등락률 ±3% → 0~100)
+        day = (cur / float(ks.iloc[-2]) - 1) * 100 if len(ks) >= 2 else 0
+        s_day = _clip01(50 + day * 16.7)
+
+        # 5) 안전자산 선호(역): 원/달러 최근 5일 변화 (원화 약세=공포)
+        s_safe = 50.0
+        try:
+            fx = yf.Ticker("KRW=X").history(period="1mo")["Close"].dropna()
+            if len(fx) >= 6:
+                fxchg = (float(fx.iloc[-1]) / float(fx.iloc[-6]) - 1) * 100
+                s_safe = _clip01(50 - fxchg * 12)   # 환율↑(원화약세)→공포
+        except Exception:
+            pass
+
+        comps = [("시장 모멘텀", s_mom), ("20일 추세", s_trend),
+                 ("변동성(안정)", s_vol), ("당일 강도", s_day), ("안전자산 선호", s_safe)]
+        score = int(round(sum(v for _, v in comps) / len(comps)))
+
+        if score >= 75:
+            label, emoji = "극단적 탐욕", "🥵"
+        elif score >= 55:
+            label, emoji = "탐욕", "😃"
+        elif score >= 45:
+            label, emoji = "중립", "🙂"
+        elif score >= 25:
+            label, emoji = "공포", "😟"
+        else:
+            label, emoji = "극단적 공포", "🥶"
+
+        return {"score": score, "label": label, "emoji": emoji,
+                "components": [(n, round(v)) for n, v in comps]}
+    except Exception:
+        return None

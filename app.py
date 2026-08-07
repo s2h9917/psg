@@ -184,6 +184,101 @@ def demo_breadth():
     return out
 
 
+@st.cache_data(ttl=900, show_spinner=False)
+def load_sentiment(bucket_key):
+    return E.fear_greed_index()
+
+
+def demo_sentiment():
+    return {"score": 63, "label": "탐욕", "emoji": "😃",
+            "components": [("시장 모멘텀", 78), ("20일 추세", 61), ("변동성(안정)", 72),
+                           ("당일 강도", 55), ("안전자산 선호", 49)]}
+
+
+def _gauge_svg(score):
+    x = 20 + (score / 100.0) * 560
+    return f"""<svg viewBox="0 0 600 92" width="100%" style="max-width:600px">
+      <defs><linearGradient id="fg" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="#1668dc"/><stop offset="0.5" stop-color="#40c057"/>
+        <stop offset="1" stop-color="#e5342a"/></linearGradient></defs>
+      <rect x="20" y="40" width="560" height="16" rx="8" fill="url(#fg)"/>
+      <polygon points="{x-9:.0f},32 {x+9:.0f},32 {x:.0f},46" fill="#0e1726"/>
+      <text x="{x:.0f}" y="24" font-size="17" font-weight="800" fill="#0e1726" text-anchor="middle">{score}</text>
+      <text x="20" y="78" font-size="12" fill="#1668dc">🥶 공포 0</text>
+      <text x="300" y="78" font-size="12" fill="#888" text-anchor="middle">중립 50</text>
+      <text x="580" y="78" font-size="12" fill="#e5342a" text-anchor="end">탐욕 100 🥵</text>
+    </svg>"""
+
+
+def _zolaman_svg(score):
+    hot = score >= 60
+    cold = score < 40
+    color = "#e5342a" if hot else ("#1668dc" if cold else "#2f9e44")
+    if hot:
+        mouth = '<ellipse cx="80" cy="52" rx="7" ry="5" fill="#0e1726"/>'
+    elif cold:
+        mouth = '<path d="M72 52 q4 -4 8 0 q4 4 8 0" stroke="#0e1726" stroke-width="2" fill="none"/>'
+    else:
+        mouth = '<path d="M72 50 q8 8 16 0" stroke="#0e1726" stroke-width="2.5" fill="none"/>'
+    extras = ""
+    if hot:
+        extras = ('<path d="M104 34 q6 8 0 12 q-6 -4 0 -12" fill="#4dabf7"/>'
+                  '<path d="M112 44 q5 7 0 10 q-5 -3 0 -10" fill="#4dabf7"/>'
+                  '<path d="M120 20 q4 6 -2 10" stroke="#e5342a" stroke-width="2" fill="none"/>'
+                  '<path d="M128 24 q4 6 -2 10" stroke="#e5342a" stroke-width="2" fill="none"/>')
+    if cold:
+        extras = ('<path d="M36 40 l6 -5 l-6 -5" stroke="#1668dc" stroke-width="2" fill="none"/>'
+                  '<path d="M124 40 l-6 -5 l6 -5" stroke="#1668dc" stroke-width="2" fill="none"/>')
+    body = ('<rect x="66" y="66" width="28" height="42" rx="8" fill="#4c6ef5"/>' if cold else
+            f'<line x1="80" y1="66" x2="80" y2="112" stroke="{color}" stroke-width="4"/>')
+    if cold:
+        arms = ('<path d="M80 80 q-14 4 -14 18 M80 80 q14 4 14 18" stroke="'
+                + color + '" stroke-width="4" fill="none"/>')
+    else:
+        arms = (f'<line x1="80" y1="78" x2="58" y2="96" stroke="{color}" stroke-width="4"/>'
+                f'<line x1="80" y1="78" x2="102" y2="96" stroke="{color}" stroke-width="4"/>')
+    return f"""<svg viewBox="0 0 160 150" width="140" height="132">
+      {extras}
+      <circle cx="80" cy="44" r="22" fill="none" stroke="{color}" stroke-width="4"/>
+      <circle cx="72" cy="40" r="2.5" fill="#0e1726"/><circle cx="88" cy="40" r="2.5" fill="#0e1726"/>
+      {mouth}
+      {body}{arms}
+      <line x1="80" y1="112" x2="66" y2="138" stroke="{color}" stroke-width="4"/>
+      <line x1="80" y1="112" x2="94" y2="138" stroke="{color}" stroke-width="4"/>
+    </svg>"""
+
+
+def render_sentiment():
+    cur = E.now_kst()
+    try:
+        fg = (load_sentiment(cur.strftime("%Y%m%d%H"))
+              if source.startswith("실시간") else demo_sentiment())
+    except Exception:
+        fg = None
+    if not fg:
+        return
+    st.markdown("#### 🌡️ 오늘의 투자 심리 온도계")
+    zc = "#e5342a" if fg["score"] >= 60 else ("#1668dc" if fg["score"] < 40 else "#2f9e44")
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.markdown(f"<div style='text-align:center'>{_zolaman_svg(fg['score'])}"
+                    f"<div style='font-size:34px'>{fg['emoji']}</div></div>", unsafe_allow_html=True)
+    with c2:
+        st.markdown(f"<div style='font-size:15px;color:#666'>현재 시장 심리</div>"
+                    f"<div style='font-size:40px;font-weight:800;color:{zc};line-height:1.1'>"
+                    f"{fg['score']} <span style='font-size:22px'>· {fg['label']}</span></div>",
+                    unsafe_allow_html=True)
+        st.markdown(_gauge_svg(fg["score"]), unsafe_allow_html=True)
+    with st.expander("🔎 심리 구성 지표"):
+        for n, v in fg["components"]:
+            st.markdown(f"<div style='font-size:12px;color:#555'>{n} <b>{v}</b></div>"
+                        f"<div style='background:#eef0f4;border-radius:5px;height:7px'>"
+                        f"<div style='width:{v}%;height:7px;border-radius:5px;background:{zc}'></div></div>",
+                        unsafe_allow_html=True)
+        st.caption("0(극단적 공포) ~ 100(극단적 탐욕) · 코스피 모멘텀·추세·변동성·강도·환율(안전자산)로 산출한 참고 지표입니다.")
+    st.divider()
+
+
 @st.fragment(run_every=60)
 def render_breadth():
     cur = E.now_kst()
@@ -405,7 +500,8 @@ def render_card(i, row, hero=False):
     st.write("")
 
 
-# --------------------------- 시장 상태(공통, 탭 위) ---------------------------
+# --------------------------- 심리 온도계 + 시장 상태(공통, 탭 위) ---------------------------
+render_sentiment()
 render_breadth()
 
 # --------------------------- 탭 ---------------------------
