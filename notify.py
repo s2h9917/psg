@@ -108,15 +108,20 @@ def build_recommendations():
 def format_message(top, asof, sname):
     medals = ["🥇", "🥈", "🥉"]
     lines = [f"💰 <b>머니캐치</b> — MTN AI PICK · {sname} (기준일 {asof})", ""]
-    for i, r in top.iterrows():
-        m = medals[i] if i < 3 else "🔹"
-        mkt = r.get("시장", "")
-        lines.append(f"{m} <b>{r['종목명']}</b> {r['티커']} · {mkt} · 종합 {r['total_score']:.0f}점")
-        lines.append(f"   매수 {int(r['buy']):,} → 목표 {int(r['target']):,} "
-                     f"(+{r['upside']*100:.0f}%) · 손절 {int(r['stop']):,}")
-        reason = E.build_reason(r).replace("**", "")
-        lines.append(f"   💡 {reason}")
-        lines.append("")
+    for mcode, mlabel in [("KOSPI", "🔵 <b>코스피</b>"), ("KOSDAQ", "🟢 <b>코스닥</b>")]:
+        part = (top[top["시장"] == mcode].reset_index(drop=True)
+                if "시장" in top.columns else top.iloc[0:0])
+        if len(part) == 0:
+            continue
+        lines.append(f"━━━━━ {mlabel} TOP {len(part)} ━━━━━")
+        for i, r in part.iterrows():
+            rank = medals[i] if i < 3 else f"{i+1}."
+            lines.append(f"{rank} <b>{r['종목명']}</b> {r['티커']} · 종합 {r['total_score']:.0f}점")
+            lines.append(f"   매수 {int(r['buy']):,} → 목표 {int(r['target']):,} "
+                         f"(+{r['upside']*100:.0f}%) · 손절 {int(r['stop']):,}")
+            reason = E.build_reason(r).replace("**", "")
+            lines.append(f"   💡 {reason}")
+            lines.append("")
     lines.append("⚠️ 투자 참고용이며 매매 권유가 아닙니다. 투자 책임은 본인에게 있습니다.")
     return "\n".join(lines)
 
