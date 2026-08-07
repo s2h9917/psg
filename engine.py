@@ -842,24 +842,27 @@ def fear_greed_index():
             return None
         cur = float(ks.iloc[-1])
         ma120 = float(ks.tail(120).mean())
-        ma20 = float(ks.tail(20).mean())
 
-        # 1) 모멘텀: 120일선 이격 (±10% → 0~100)
+        def _smooth(x, scale):   # 부드러운 매핑: 0/100에 딱 붙지 않고 항상 값이 채워짐
+            import math
+            return _clip01(50 + 50 * math.tanh(x / scale))
+
+        # 1) 시장 모멘텀: 120일선 이격(%)
         gap = (cur / ma120 - 1) * 100 if ma120 else 0
-        s_mom = _clip01(50 + gap * 5)
+        s_mom = _smooth(gap, 8)
 
-        # 2) 20일 추세 (20일 수익률 ±10% → 0~100)
+        # 2) 20일 추세: 20일 수익률(%)
         ret20 = (cur / float(ks.iloc[-20]) - 1) * 100 if len(ks) >= 20 else 0
-        s_trend = _clip01(50 + ret20 * 5)
+        s_trend = _smooth(ret20, 12)
 
-        # 3) 변동성(역): 최근 20일 일간수익률 표준편차 (낮으면 탐욕)
+        # 3) 변동성(안정): 최근 20일 일간수익률 표준편차 (낮을수록 안정=탐욕)
         daily = ks.pct_change().dropna().tail(20)
         vol = float(daily.std() * 100) if len(daily) else 1.5
-        s_vol = _clip01(100 - (vol - 0.5) / 2.5 * 100)   # 0.5%→100, 3%→0
+        s_vol = _clip01(50 - 50 * __import__("math").tanh((vol - 1.5) / 1.5))
 
-        # 4) 당일 강도 (등락률 ±3% → 0~100)
+        # 4) 당일 강도: 당일 등락률(%)
         day = (cur / float(ks.iloc[-2]) - 1) * 100 if len(ks) >= 2 else 0
-        s_day = _clip01(50 + day * 16.7)
+        s_day = _smooth(day, 2.5)
 
         # 5) 안전자산 선호(역): 원/달러 최근 5일 변화 (원화 약세=공포)
         s_safe = 50.0
@@ -867,7 +870,7 @@ def fear_greed_index():
             fx = yf.Ticker("KRW=X").history(period="1mo")["Close"].dropna()
             if len(fx) >= 6:
                 fxchg = (float(fx.iloc[-1]) / float(fx.iloc[-6]) - 1) * 100
-                s_safe = _clip01(50 - fxchg * 12)   # 환율↑(원화약세)→공포
+                s_safe = _smooth(-fxchg, 1.5)   # 환율↑(원화약세)→공포
         except Exception:
             pass
 

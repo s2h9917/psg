@@ -31,6 +31,10 @@ st.markdown("""
       background:#eef2ff;color:#4c6ef5;margin-right:6px;}
 .mkt{background:#e6fcf5;color:#0ca678;} .hot{background:#fff0f0;color:#e03131;}
 .sig{background:#fff4e6;color:#e8590c;} .rsipill{background:#eef2ff;color:#4c6ef5;}
+@keyframes mcShiver{0%,100%{transform:translateX(-1.6px) rotate(-1.5deg);}50%{transform:translateX(1.6px) rotate(1.5deg);}}
+@keyframes mcPant{0%,100%{transform:translateY(0);}50%{transform:translateY(-3px);}}
+.mc-cold{animation:mcShiver .16s infinite;transform-origin:center;}
+.mc-hot{animation:mcPant .55s ease-in-out infinite;transform-origin:center;}
 .mascot{font-size:13px;color:#5c7cfa;background:#eef2ff;border-radius:10px;padding:6px 12px;display:inline-block;}
 button[data-baseweb="tab"] p{font-weight:800 !important;font-size:16px !important;}
 </style>
@@ -259,9 +263,11 @@ def render_sentiment():
         return
     st.markdown("#### 🌡️ 오늘의 투자 심리 온도계")
     zc = "#e5342a" if fg["score"] >= 60 else ("#1668dc" if fg["score"] < 40 else "#2f9e44")
+    anim = "mc-hot" if fg["score"] >= 60 else ("mc-cold" if fg["score"] < 40 else "")
     c1, c2 = st.columns([1, 3])
     with c1:
-        st.markdown(f"<div style='text-align:center'>{_zolaman_svg(fg['score'])}"
+        st.markdown(f"<div style='text-align:center'>"
+                    f"<div class='{anim}' style='display:inline-block'>{_zolaman_svg(fg['score'])}</div>"
                     f"<div style='font-size:34px'>{fg['emoji']}</div></div>", unsafe_allow_html=True)
     with c2:
         st.markdown(f"<div style='font-size:15px;color:#666'>현재 시장 심리</div>"
@@ -273,7 +279,7 @@ def render_sentiment():
         for n, v in fg["components"]:
             st.markdown(f"<div style='font-size:12px;color:#555'>{n} <b>{v}</b></div>"
                         f"<div style='background:#eef0f4;border-radius:5px;height:7px'>"
-                        f"<div style='width:{v}%;height:7px;border-radius:5px;background:{zc}'></div></div>",
+                        f"<div style='width:{max(v,3)}%;height:7px;border-radius:5px;background:{zc}'></div></div>",
                         unsafe_allow_html=True)
         st.caption("0(극단적 공포) ~ 100(극단적 탐욕) · 코스피 모멘텀·추세·변동성·강도·환율(안전자산)로 산출한 참고 지표입니다.")
     st.divider()
