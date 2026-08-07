@@ -139,6 +139,26 @@ def load_current_prices(tickers, date_key):
     return E.get_current_prices(list(tickers))
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_indices(date_key_min):
+    return E.fetch_indices()
+
+
+def demo_indices():
+    return {"KOSPI": {"price": 6309.20, "chg": 12.82, "pct": 0.20, "time": "09:36"},
+            "KOSDAQ": {"price": 806.15, "chg": 4.48, "pct": 0.56, "time": "09:36"}}
+
+
+def _idx_html(label, d):
+    if not d:
+        return f"<b>{label}</b> <span style='color:#999'>—</span>"
+    up = d["chg"] >= 0
+    color = "#e5342a" if up else "#1668dc"   # 상승=빨강, 하락=파랑 (국내 관례)
+    arrow = "▲" if up else "▼"
+    return (f"<b>{label}</b> <span style='font-family:monospace'>{d['price']:,.2f}</span> "
+            f"<span style='color:{color};font-weight:600'>{arrow}{abs(d['chg']):,.2f} ({d['pct']:+.2f}%)</span>")
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_breadth(markets_key, date_key):
     return E.market_breadth(tuple(markets_key))
@@ -170,6 +190,21 @@ def render_breadth():
         return
     t = br["total"]
     st.markdown("#### 🧭 오늘의 시장 상태")
+    # 실시간(약간 지연) 지수 한 줄
+    try:
+        idx = (load_indices(now.strftime("%Y%m%d%H%M")[:-1])  # 약 10분 단위 캐시 키
+               if source.startswith("실시간") else demo_indices())
+        itime = (idx.get("KOSPI") or idx.get("KOSDAQ") or {}).get("time", "")
+        st.markdown(
+            f"<div style='font-size:16px;padding:6px 0;'>"
+            f"{_idx_html('코스피', idx.get('KOSPI'))} &nbsp;&nbsp;·&nbsp;&nbsp; "
+            f"{_idx_html('코스닥', idx.get('KOSDAQ'))}"
+            f" &nbsp;<span style='color:#888;font-size:12px'>({itime} · 약간 지연)</span></div>",
+            unsafe_allow_html=True)
+    except Exception:
+        pass
+    st.caption(f"📅 데이터 기준일 **{br['asof']}** · 조회 {now.strftime('%m-%d %H:%M')} (KST) · "
+               "일별 스냅샷 기준(장중 실시간 아님)")
     cols = st.columns(4)
     cols[0].metric("시장 심리", br["mood"])
     cols[1].metric("전체 상승비율", f"{t['ratio']:.0f}%")
@@ -181,7 +216,7 @@ def render_breadth():
     kq = br["markets"].get("KOSDAQ", {}).get("ratio", 0)
     stronger = "코스피" if ks >= kq else "코스닥"
     st.caption(f"📝 오늘 국내 증시는 **{br['mood']}** 입니다. 상승 종목 비율은 "
-               f"코스피 {ks:.0f}%·코스닥 {kq:.0f}%로 **{stronger}**가 상대적으로 강합니다. (기준일 {br['asof']})")
+               f"코스피 {ks:.0f}%·코스닥 {kq:.0f}%로 **{stronger}**가 상대적으로 강합니다.")
     st.divider()
 
 @st.cache_data(ttl=1800, show_spinner=False)
