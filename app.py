@@ -140,28 +140,30 @@ def load_current_prices(tickers, date_key):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_indices(date_key_min):
-    return E.fetch_indices()
+def load_dashboard(bucket_key):
+    return E.fetch_dashboard()
 
 
-def demo_indices():
-    return {"KOSPI": {"price": 6309.20, "chg": 12.82, "pct": 0.20, "time": "09:36"},
-            "KOSDAQ": {"price": 806.15, "chg": 4.48, "pct": 0.56, "time": "09:36"}}
+def demo_dashboard():
+    def q(p, c): return {"price": p, "chg": c, "pct": c / (p - c) * 100 if (p - c) else 0, "time": "09:43"}
+    return {"domestic": [("코스피", q(6291.01, -14.51)), ("코스닥", q(801.25, -4.83))],
+            "fx": [("원/달러", q(1382.50, 3.20))],
+            "global": [("나스닥", q(26348.35, -120.0)), ("S&P500", q(6520.10, -8.4)), ("다우", q(53885.10, -95.0))],
+            "commodity": [("WTI유가", q(71.20, 0.85)), ("금", q(2418.6, 12.4))]}
 
 
-def _idx_html(label, d):
+def _big_idx_html(label, d):
     if not d:
-        return f"<b>{label}</b> <span style='color:#999'>—</span>"
+        return f"<div style='padding:6px 0'><span style='font-size:14px;color:#666'>{label}</span><br>" \
+               f"<span style='font-size:26px;color:#999'>—</span></div>"
     up = d["chg"] >= 0
     color = "#e5342a" if up else "#1668dc"   # 상승=빨강, 하락=파랑 (국내 관례)
     arrow = "▲" if up else "▼"
-    return (f"<b>{label}</b> <span style='font-family:monospace'>{d['price']:,.2f}</span> "
-            f"<span style='color:{color};font-weight:600'>{arrow}{abs(d['chg']):,.2f} ({d['pct']:+.2f}%)</span>")
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_breadth(markets_key, date_key):
-    return E.market_breadth(tuple(markets_key))
+    return (f"<div style='padding:6px 0'>"
+            f"<span style='font-size:14px;color:#666'>{label}</span><br>"
+            f"<span style='font-size:32px;font-weight:800;font-family:monospace;letter-spacing:-1px'>{d['price']:,.2f}</span> "
+            f"<span style='font-size:17px;color:{color};font-weight:700'>{arrow}{abs(d['chg']):,.2f} ({d['pct']:+.2f}%)</span>"
+            f"</div>")
 
 
 def demo_breadth():
@@ -183,40 +185,33 @@ def demo_breadth():
 
 
 def render_breadth():
+    st.markdown("#### 🧭 실시간 시장 (약간 지연)")
     try:
-        br = (load_breadth(tuple(markets or ["KOSPI", "KOSDAQ"]), now.strftime("%Y%m%d"))
-              if source.startswith("실시간") else demo_breadth())
+        dash = (load_dashboard(now.strftime("%Y%m%d%H%M")[:-1])
+                if source.startswith("실시간") else demo_dashboard())
     except Exception:
-        return
-    t = br["total"]
-    st.markdown("#### 🧭 오늘의 시장 상태")
-    # 실시간(약간 지연) 지수 한 줄
-    try:
-        idx = (load_indices(now.strftime("%Y%m%d%H%M")[:-1])  # 약 10분 단위 캐시 키
-               if source.startswith("실시간") else demo_indices())
-        itime = (idx.get("KOSPI") or idx.get("KOSDAQ") or {}).get("time", "")
-        st.markdown(
-            f"<div style='font-size:16px;padding:6px 0;'>"
-            f"{_idx_html('코스피', idx.get('KOSPI'))} &nbsp;&nbsp;·&nbsp;&nbsp; "
-            f"{_idx_html('코스닥', idx.get('KOSDAQ'))}"
-            f" &nbsp;<span style='color:#888;font-size:12px'>({itime} · 약간 지연)</span></div>",
-            unsafe_allow_html=True)
-    except Exception:
-        pass
-    st.caption(f"📅 데이터 기준일 **{br['asof']}** · 조회 {now.strftime('%m-%d %H:%M')} (KST) · "
-               "일별 스냅샷 기준(장중 실시간 아님)")
-    cols = st.columns(4)
-    cols[0].metric("시장 심리", br["mood"])
-    cols[1].metric("전체 상승비율", f"{t['ratio']:.0f}%")
-    for i, (mc, ml) in enumerate([("KOSPI", "코스피"), ("KOSDAQ", "코스닥")]):
-        if mc in br["markets"]:
-            d = br["markets"][mc]
-            cols[2 + i].metric(f"{ml} 상승/하락", f"{d['adv']} / {d['dec']}")
-    ks = br["markets"].get("KOSPI", {}).get("ratio", 0)
-    kq = br["markets"].get("KOSDAQ", {}).get("ratio", 0)
-    stronger = "코스피" if ks >= kq else "코스닥"
-    st.caption(f"📝 오늘 국내 증시는 **{br['mood']}** 입니다. 상승 종목 비율은 "
-               f"코스피 {ks:.0f}%·코스닥 {kq:.0f}%로 **{stronger}**가 상대적으로 강합니다.")
+        dash = None
+    if not dash:
+        st.info("실시간 시세를 불러오지 못했습니다. 잠시 후 새로고침 해주세요.")
+        st.divider(); return
+
+    dom = dict(dash.get("domestic", []))
+    itime = next((q["time"] for _, q in dash.get("domestic", []) if q), "")
+
+    # 대표 지수(코스피·코스닥) 크게
+    big = st.columns(2)
+    big[0].markdown(_big_idx_html("코스피", dom.get("코스피")), unsafe_allow_html=True)
+    big[1].markdown(_big_idx_html("코스닥", dom.get("코스닥")), unsafe_allow_html=True)
+    st.caption(f"⏱️ 지수 기준 {itime} · 약 5~10분 지연 · 조회 {now.strftime('%m-%d %H:%M')} (KST)")
+
+    # 환율 · 해외지수 · 원자재 (작게)
+    small = dash.get("fx", []) + dash.get("global", []) + dash.get("commodity", [])
+    cols = st.columns(len(small))
+    for c, (label, q) in zip(cols, small):
+        if q:
+            c.metric(label, f"{q['price']:,.2f}", f"{q['pct']:+.2f}%", delta_color="inverse")
+        else:
+            c.metric(label, "—")
     st.divider()
 
 @st.cache_data(ttl=1800, show_spinner=False)

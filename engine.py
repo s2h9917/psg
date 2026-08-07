@@ -769,41 +769,54 @@ def fair_value(current, per, pbr, roe, div, rf=0.03, mrp=0.055, g=0.02, target_p
 # ====================================================================
 # 실시간 지수 (코스피/코스닥) — 야후 파이낸스
 # ====================================================================
-def fetch_indices():
-    """
-    코스피(^KS11)·코스닥(^KQ11) 현재값·등락률·시각을 반환.
-    반환: {"KOSPI": {"price","chg","pct","time"}, "KOSDAQ": {...}}  실패 시 해당 키 None
-    """
+def _quote(sym):
+    """야후에서 심볼의 현재값·전일대비·등락률·시각을 반환. 실패 시 None."""
     import yfinance as yf
-    out = {}
-    for name, sym in [("KOSPI", "^KS11"), ("KOSDAQ", "^KQ11")]:
-        d = None
+    try:
+        tk = yf.Ticker(sym)
+        price = prev = None
+        t = None
         try:
-            tk = yf.Ticker(sym)
-            price = prev = None
-            t = None
-            try:
-                fi = tk.fast_info
-                price = float(fi["last_price"])
-                prev = float(fi["previous_close"])
-            except Exception:
-                pass
-            if price is None or prev is None:
-                h = tk.history(period="5d")
-                if len(h) >= 1:
-                    price = float(h["Close"].iloc[-1])
-                    prev = float(h["Close"].iloc[-2]) if len(h) >= 2 else price
-                    t = h.index[-1]
-            if price is not None and prev:
-                chg = price - prev
-                pct = chg / prev * 100 if prev else 0.0
-                try:
-                    ts = (t or pd.Timestamp.utcnow()).tz_convert("Asia/Seoul") if t is not None else None
-                except Exception:
-                    ts = None
-                d = {"price": price, "chg": chg, "pct": pct,
-                     "time": ts.strftime("%H:%M") if ts is not None else now_kst().strftime("%H:%M")}
+            fi = tk.fast_info
+            price = float(fi["last_price"])
+            prev = float(fi["previous_close"])
         except Exception:
-            d = None
-        out[name] = d
-    return out
+            pass
+        if price is None or prev is None:
+            h = tk.history(period="5d")
+            if len(h) >= 1:
+                price = float(h["Close"].iloc[-1])
+                prev = float(h["Close"].iloc[-2]) if len(h) >= 2 else price
+                t = h.index[-1]
+        if price is None or not prev:
+            return None
+        chg = price - prev
+        pct = chg / prev * 100 if prev else 0.0
+        try:
+            ts = t.tz_convert("Asia/Seoul") if t is not None else None
+        except Exception:
+            ts = None
+        return {"price": price, "chg": chg, "pct": pct,
+                "time": ts.strftime("%H:%M") if ts is not None else now_kst().strftime("%H:%M")}
+    except Exception:
+        return None
+
+
+def fetch_indices():
+    """코스피·코스닥 지수 (하위호환용)."""
+    return {"KOSPI": _quote("^KS11"), "KOSDAQ": _quote("^KQ11")}
+
+
+def fetch_dashboard():
+    """
+    국내 투자자용 실시간(약간 지연) 시세 모음.
+    반환: {"domestic":[(라벨,q)...], "fx":[...], "global":[...], "commodity":[...]}
+    """
+    groups = {
+        "domestic": [("코스피", "^KS11"), ("코스닥", "^KQ11")],
+        "fx": [("원/달러", "KRW=X")],
+        "global": [("나스닥", "^IXIC"), ("S&P500", "^GSPC"), ("다우", "^DJI")],
+        "commodity": [("WTI유가", "CL=F"), ("금", "GC=F")],
+    }
+    return {cat: [(label, _quote(sym)) for label, sym in items]
+            for cat, items in groups.items()}
