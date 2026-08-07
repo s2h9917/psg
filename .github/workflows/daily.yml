@@ -2,8 +2,9 @@ name: daily-pick
 
 on:
   schedule:
-    - cron: '40 23 * * *'    # 08:40 KST(전일 23:40 UTC) → 시초가(open)
-    - cron: '0 6 * * *'      # 15:00 KST(당일 06:00 UTC) → 종가(close)
+    # ⚠️ GitHub 예약은 UTC 기준이며 정시(:00)엔 지연이 큽니다. 정시를 피해 설정했습니다.
+    - cron: '30 23 * * *'    # 08:30 KST(전일 23:30 UTC) → 시초가(open)
+    - cron: '5 6 * * *'      # 15:05 KST(당일 06:05 UTC) → 종가(close)
   workflow_dispatch:
     inputs:
       session:
@@ -31,8 +32,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           MARKETS: 'KOSPI,KOSDAQ'
           PER_MARKET: '3'
-          # 오전 스케줄(23:40 UTC)=시초가, 그 외=종가. 수동 실행 시 입력값 우선.
-          SESSION: ${{ github.event.inputs.session || (github.event.schedule == '40 23 * * *' && 'open' || 'close') }}
+          # 오전 스케줄(23:30 UTC)=시초가, 그 외=종가. 수동 실행 시 입력값 우선.
+          SESSION: ${{ github.event.inputs.session || (github.event.schedule == '30 23 * * *' && 'open' || 'close') }}
         run: python notify.py
       - name: Commit history
         run: |
