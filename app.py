@@ -184,27 +184,27 @@ def demo_breadth():
     return out
 
 
+@st.fragment(run_every=60)
 def render_breadth():
-    st.markdown("#### 🧭 실시간 시장 (약간 지연)")
+    cur = E.now_kst()
+    st.markdown("#### 🧭 실시간 시장 (지연시세)")
     try:
-        dash = (load_dashboard(now.strftime("%Y%m%d%H%M")[:-1])
+        dash = (load_dashboard(cur.strftime("%Y%m%d%H%M"))   # 분 단위 키 → 자동 갱신 시 신선한 데이터
                 if source.startswith("실시간") else demo_dashboard())
     except Exception:
         dash = None
     if not dash:
-        st.info("실시간 시세를 불러오지 못했습니다. 잠시 후 새로고침 해주세요.")
+        st.info("실시간 시세를 불러오지 못했습니다. 잠시 후 자동 갱신됩니다.")
         st.divider(); return
 
     dom = dict(dash.get("domestic", []))
     itime = next((q["time"] for _, q in dash.get("domestic", []) if q), "")
 
-    # 대표 지수(코스피·코스닥) 크게
     big = st.columns(2)
     big[0].markdown(_big_idx_html("코스피", dom.get("코스피")), unsafe_allow_html=True)
     big[1].markdown(_big_idx_html("코스닥", dom.get("코스닥")), unsafe_allow_html=True)
-    st.caption(f"⏱️ 지수 기준 {itime} · 약 5~10분 지연 · 조회 {now.strftime('%m-%d %H:%M')} (KST)")
+    st.caption(f"⏱️ 지수 기준 {itime} · 지연시세 · 조회 {cur.strftime('%H:%M:%S')} (KST) · 60초마다 자동 갱신")
 
-    # 환율 · 해외지수 · 원자재 (작게)
     small = dash.get("fx", []) + dash.get("global", []) + dash.get("commodity", [])
     cols = st.columns(len(small))
     for c, (label, q) in zip(cols, small):
